@@ -1,0 +1,28 @@
+{
+  "name": "lightbulb",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @lightbulb/api",
+    "dev:web": "npm run dev -w @lightbulb/web",
+    "db:up": "docker compose up -d db",
+    "db:generate": "npm run db:generate -w @lightbulb/api",
+    "db:migrate": "npm run db:migrate -w @lightbulb/api",
+    "build": "npm run build -w @lightbulb/runner && npm run build -w @lightbulb/api && npm run build -w @lightbulb/web",
+    "runner": "node apps/runner/dist/lightbulb.cjs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "voice:up": "docker compose up -d whisper",
+    "services:up": "docker compose up -d"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "concurrently": "^9.2.4",
+    "typescript": "^7.0.2"
+  }
+}

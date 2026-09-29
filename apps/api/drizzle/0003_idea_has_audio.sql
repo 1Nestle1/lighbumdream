@@ -1,0 +1,1 @@
+ALTER TABLE "ideas" ADD COLUMN "has_audio" boolean DEFAULT false NOT NULL;

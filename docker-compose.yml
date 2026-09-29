@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lightbulb
+      POSTGRES_PASSWORD: lightbulb
+      POSTGRES_DB: lightbulb
+    # 5433 so it doesn't collide with a locally installed Postgres on 5432.
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lightbulb"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Offline speech-to-text. Audio is transcribed here and never sent to a third party.
+  whisper:
+    build: ./docker/whisper
+    image: lightbulb-whisper:1.9.4
+    restart: unless-stopped
+    environment:
+      # base (~150 MB) is quick on CPU; small (~470 MB) is noticeably better for non-English speech.
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        model=/models/ggml-$${WHISPER_MODEL}.bin
+        [ -f "$$model" ] || download-ggml-model.sh "$$WHISPER_MODEL" /models
+        exec whisper-server -m "$$model" --host 0.0.0.0 --port 8080 --convert -l auto
+    # Localhost only: the API is the one talking to it.
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - whisper-models:/models
+
+volumes:
+  pgdata:
+  whisper-models:

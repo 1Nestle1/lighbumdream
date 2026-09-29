@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Lightbulb</title>
+    <script>
+      // Apply the theme and language before first paint to avoid a flash.
+      (function () {
+        var pref = "system", lang = null;
+        try { pref = localStorage.getItem("lb-theme") || "system"; lang = localStorage.getItem("lb-locale"); } catch (e) {}
+        var dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        if (!lang) lang = (navigator.language || "").toLowerCase().indexOf("ru") === 0 ? "ru" : "en";
+        document.documentElement.lang = lang;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
