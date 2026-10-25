@@ -20,6 +20,9 @@ export const RequestMagicLinkBody = z.object({
 });
 export type RequestMagicLinkBody = z.infer<typeof RequestMagicLinkBody>;
 
+export const LoginBody = z.object({ email: EmailSchema, password: z.string().min(1).max(200) });
+export type LoginBody = z.infer<typeof LoginBody>;
+
 export const VerifyMagicLinkBody = z.object({ token: z.string().min(20).max(200) });
 export type VerifyMagicLinkBody = z.infer<typeof VerifyMagicLinkBody>;
 
@@ -254,6 +257,12 @@ export interface HealthResponse {
   aiSuggestions: boolean;
   voice: boolean;
   telegram: { enabled: boolean; botUsername: string | null };
+  auth: {
+    /** Sign-in links can be delivered (email configured, or development). */
+    magicLink: boolean;
+    /** New accounts can be created by signing in; off means accounts are made by the admin. */
+    signup: boolean;
+  };
 }
 
 export interface TelegramLinkResponse {

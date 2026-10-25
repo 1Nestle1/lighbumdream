@@ -5,7 +5,7 @@ import { ArrowRightIcon, EnvelopeSimpleIcon, WarningIcon } from "@phosphor-icons
 import type { FolderIcon } from "@lightbulb/shared";
 import { useI18n } from "../i18n";
 import { api, ApiError } from "../lib/api";
-import { keys, queryClient, useMe } from "../lib/queries";
+import { keys, queryClient, useHealth, useMe } from "../lib/queries";
 import { takePendingConnect } from "./connect";
 import { Brand } from "../components/AppShell";
 import { IdeaCard } from "../components/IdeaCard";
@@ -25,6 +25,12 @@ const SHOWCASE_LAYOUT: { icon: FolderIcon | null; ago: number; tilt: string }[] 
 export function LoginPage() {
   const { m, locale, rich, errorText } = useI18n();
   const me = useMe();
+  const health = useHealth();
+  const navigate = useNavigate();
+  // Password first; the emailed link only where links can actually be delivered.
+  const linkAvailable = Boolean(health.data?.auth.magicLink);
+  const [mode, setMode] = useState<"password" | "link">("password");
+  const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<{ email: string; devLink?: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -37,6 +43,13 @@ export function LoginPage() {
     setError(null);
     setPending(true);
     try {
+      if (mode === "password") {
+        const { user } = await api.login(email, password);
+        queryClient.setQueryData(keys.me, user);
+        const pending = takePendingConnect();
+        navigate(pending ? `/connect?code=${encodeURIComponent(pending)}` : "/", { replace: true });
+        return;
+      }
       // The page's language goes along, so the email and the account match it.
       const res = await api.requestLink(email, locale);
       setSent({ email: email.trim().toLowerCase(), devLink: res.devLink });
@@ -91,7 +104,12 @@ export function LoginPage() {
               </h1>
               <p className="mt-5 max-w-[42ch] text-base leading-relaxed text-ink-soft md:text-lg">{m.login.subtitle}</p>
               <form onSubmit={(e) => void submit(e)} className="mt-9 flex flex-col gap-4">
-                <Field label={m.login.email} htmlFor="email" error={errorMessage} hint={m.login.emailHint}>
+                <Field
+                  label={m.login.email}
+                  htmlFor="email"
+                  error={mode === "link" ? errorMessage : null}
+                  hint={mode === "link" ? m.login.emailHint : undefined}
+                >
                   <input
                     id="email"
                     type="email"
@@ -103,11 +121,42 @@ export function LoginPage() {
                     placeholder={m.login.placeholder}
                   />
                 </Field>
+                {mode === "password" && (
+                  <Field label={m.login.password} htmlFor="password" error={errorMessage}>
+                    <input
+                      id="password"
+                      type="password"
+                      required
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className={cn(inputClass, "h-12")}
+                    />
+                  </Field>
+                )}
                 <Button type="submit" variant="primary" size="lg" disabled={pending} className="w-full sm:w-auto sm:self-start">
-                  {pending ? m.login.sending : m.login.submit}
+                  {mode === "password"
+                    ? pending
+                      ? m.login.signingIn
+                      : m.login.signIn
+                    : pending
+                      ? m.login.sending
+                      : m.login.submit}
                   {!pending && <ArrowRightIcon size={16} weight="bold" aria-hidden />}
                 </Button>
               </form>
+              {(linkAvailable || mode === "link") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setMode(mode === "password" ? "link" : "password");
+                  }}
+                  className="mt-5 text-sm font-medium text-ink-soft underline-offset-4 transition hover:text-ink hover:underline"
+                >
+                  {mode === "password" ? m.login.useLink : m.login.usePassword}
+                </button>
+              )}
             </motion.div>
           )}
         </div>

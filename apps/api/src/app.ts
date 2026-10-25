@@ -3,7 +3,8 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 import type { ApiErrorBody, HealthResponse } from "@lightbulb/shared";
-import { isProd } from "./env.js";
+import { env, isProd } from "./env.js";
+import { mailerConfigured } from "./auth/mailer.js";
 import { agentRoutes } from "./agents/routes.js";
 import { authRoutes } from "./auth/routes.js";
 import { registerSession } from "./auth/session.js";
@@ -79,6 +80,7 @@ export async function buildApp() {
           aiSuggestions: aiSuggestionsEnabled,
           voice: await voiceAvailable(),
           telegram: telegramInfo(),
+          auth: { magicLink: mailerConfigured || !isProd, signup: env.ALLOW_SIGNUP === "true" },
         }),
       );
       await api.register(authRoutes);

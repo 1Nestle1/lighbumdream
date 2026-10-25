@@ -10,6 +10,8 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   SUGGEST_MODEL: z.string().default("claude-opus-5"),
   SMTP_URL: z.string().optional(),
+  /** "false": nobody can create an account by signing in; the admin creates them (npm run admin). */
+  ALLOW_SIGNUP: z.enum(["true", "false"]).default("true"),
   MAIL_FROM: z.string().default("Lightbulb <no-reply@lightbulb.local>"),
   /** Self-hosted whisper.cpp server (see docker-compose.yml). Audio never leaves your infrastructure. */
   WHISPER_URL: z.url().default("http://127.0.0.1:8081"),

@@ -53,6 +53,8 @@ export const users = pgTable("users", {
   telegramId: bigint("telegram_id", { mode: "number" }).unique(),
   /** Interface language; also used for the bot, emails and as the default speech language. */
   locale: text("locale").$type<Locale>().notNull().default("en"),
+  /** scrypt hash ("scrypt$N$r$p$salt$hash"); null for accounts that only sign in by link. */
+  passwordHash: text("password_hash"),
   createdAt: createdAt(),
 });
 

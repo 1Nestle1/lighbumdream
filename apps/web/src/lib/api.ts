@@ -89,6 +89,8 @@ export const api = {
   me: () => request<{ user: User }>("/auth/me"),
   requestLink: (email: string, locale: Locale) =>
     request<MagicLinkResponse>("/auth/magic-link", { method: "POST", body: { email, locale } }),
+  login: (email: string, password: string) =>
+    request<{ user: User }>("/auth/login", { method: "POST", body: { email, password } }),
   verify: (token: string) => request<{ user: User }>("/auth/verify", { method: "POST", body: { token } }),
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
   updateMe: (body: { locale: Locale }) => request<{ user: User }>("/auth/me", { method: "PATCH", body }),

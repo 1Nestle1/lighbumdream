@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "admin": "tsx --env-file-if-exists=../../.env src/admin.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
