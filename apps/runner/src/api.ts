@@ -13,6 +13,15 @@ export class ApiError extends Error {
   }
 }
 
+/** "fetch failed" says nothing; the cause (refused, DNS, TLS, timeout) does. */
+function networkReason(err: unknown): string {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  if (cause?.code === "ECONNREFUSED") return "nothing is answering there (is it running?)";
+  if (cause?.code === "ENOTFOUND") return "the address doesn't exist";
+  if ((err as Error)?.name === "TimeoutError") return "it took too long to answer";
+  return cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err));
+}
+
 interface CallOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -34,12 +43,18 @@ export function createApi(server: string, token?: string) {
   };
 
   async function call<T>(method: string, path: string, body: unknown, options: CallOptions): Promise<T> {
-    const response = await fetch(`${server}/api${path}`, {
-      method,
-      headers: headers(body !== undefined),
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: signalFor(options),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${server}/api${path}`, {
+        method,
+        headers: headers(body !== undefined),
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: signalFor(options),
+      });
+    } catch (err) {
+      if (options.signal?.aborted) throw err;
+      throw new ApiError(0, "network", `Can't reach ${server}: ${networkReason(err)}`);
+    }
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
       throw new ApiError(response.status, data?.error ?? "http_error", data?.message ?? `HTTP ${response.status}`);
