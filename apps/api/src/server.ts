@@ -25,6 +25,6 @@ const shutdown = async () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-await app.listen({ port: env.API_PORT, host: "0.0.0.0" });
+await app.listen({ port: env.API_PORT, host: env.API_HOST });
 await startTelegram(app.log);
 stopCloudWorker = startCloudWorker(app.log);

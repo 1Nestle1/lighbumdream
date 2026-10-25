@@ -1,0 +1,52 @@
+# Postgres and whisper for a server where Docker is kept out of the network setup
+# ("iptables": false in /etc/docker/daemon.json): no bridge NAT, so both containers use the
+# host's network and listen on 127.0.0.1 only. Ports differ from the defaults to avoid clashes.
+#
+#   docker compose -f deploy/docker-compose.host.yml --env-file /path/to/lightbulb.env up -d --build
+#
+# Needs POSTGRES_PASSWORD in the env file; DATABASE_URL then points at 127.0.0.1:5433.
+name: lightbulb
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    network_mode: host
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=5433"]
+    environment:
+      POSTGRES_USER: lightbulb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: lightbulb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5433 -U lightbulb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Offline speech-to-text. Audio never leaves the server.
+  whisper:
+    build:
+      context: ../docker/whisper
+      network: host
+    image: lightbulb-whisper:1.9.4
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        model=/models/ggml-$${WHISPER_MODEL}.bin
+        [ -f "$$model" ] || download-ggml-model.sh "$$WHISPER_MODEL" /models
+        exec whisper-server -m "$$model" --host 127.0.0.1 --port 8081 --convert -l auto
+    volumes:
+      - whisper-models:/models
+    mem_limit: 1g
+
+volumes:
+  pgdata:
+  whisper-models:

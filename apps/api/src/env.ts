@@ -4,6 +4,8 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string().default("postgres://lightbulb:lightbulb@localhost:5433/lightbulb"),
   API_PORT: z.coerce.number().int().default(3001),
+  /** Interface to listen on. Use 127.0.0.1 behind a reverse proxy on a shared server. */
+  API_HOST: z.string().default("0.0.0.0"),
   WEB_ORIGIN: z.url().default("http://localhost:5173"),
   ANTHROPIC_API_KEY: z.string().optional(),
   SUGGEST_MODEL: z.string().default("claude-opus-5"),

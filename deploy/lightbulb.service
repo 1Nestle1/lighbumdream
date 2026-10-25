@@ -1,0 +1,29 @@
+# systemd unit for the Lightbulb API on a server. Install to /etc/systemd/system/lightbulb.service.
+# Settings come from /opt/lightbulb/lightbulb.env (root-owned, mode 600; systemd reads it before
+# dropping to the lightbulb user). nginx serves apps/web/dist and proxies /api to API_HOST:API_PORT.
+[Unit]
+Description=Lightbulb API
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=lightbulb
+Group=lightbulb
+WorkingDirectory=/opt/lightbulb/app/apps/api
+EnvironmentFile=/opt/lightbulb/lightbulb.env
+ExecStartPre=/usr/local/bin/node dist/migrate.js
+ExecStart=/usr/local/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/lightbulb/data
+
+[Install]
+WantedBy=multi-user.target
