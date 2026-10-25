@@ -483,6 +483,16 @@ export const en = {
     noActivity: "Nothing has run yet.",
     lastActivity: "{ago}",
   },
+  projectFolder: {
+    label: "Folder on your computer",
+    none: "A new folder in ~/Lightbulb",
+    placeholder: "C:\\Users\\you\\Projects\\my-app",
+    hint: "For a project you already have: agents work right in that folder, and nothing from it is uploaded.",
+    change: "Change",
+    set: "Use my folder",
+    clear: "Use a new folder",
+    saved: "Saved",
+  },
   prompt: {
     label: "Prompt for the agent",
     placeholder: "Add reminders, fix the login, write tests...",

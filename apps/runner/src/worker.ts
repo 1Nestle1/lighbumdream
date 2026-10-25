@@ -74,13 +74,24 @@ async function restoreFromArchive(api: Api, task: RunnerTask, dir: string) {
 }
 
 /** The idea's folder under the workspace, with its attachments downloaded next to the work. */
+/** The project's own folder (an existing repo) when it's set and present on this computer. */
+async function linkedFolder(task: RunnerTask): Promise<string | null> {
+  if (!task.projectPath) return null;
+  const info = await stat(task.projectPath).catch(() => null);
+  if (info?.isDirectory()) return path.resolve(task.projectPath);
+  log.warn(`The project's folder ${task.projectPath} isn't on this computer; using the Lightbulb projects folder.`);
+  return null;
+}
+
 async function prepareProject(api: Api, config: Config, task: RunnerTask): Promise<string> {
-  const dir = path.join(workspaceDir(config), task.projectSlug);
+  const linked = await linkedFolder(task);
+  const dir = linked ?? path.join(workspaceDir(config), task.projectSlug);
   const meta = path.join(dir, ".lightbulb");
   await mkdir(meta, { recursive: true });
-  // Keep Lightbulb's scratch files out of any git repository the agent creates.
+  // Keep Lightbulb's scratch files out of any git repository (the agent's or the user's own).
   await writeFile(path.join(meta, ".gitignore"), "*\n");
-  await restoreFromArchive(api, task, dir);
+  // An existing repo is already here; only Lightbulb's own project folders are restored.
+  if (!linked) await restoreFromArchive(api, task, dir);
 
   if (task.idea.files.length) {
     const attachments = path.join(dir, ATTACHMENTS);
@@ -220,7 +231,9 @@ async function handleTask(api: Api, config: Config, agents: Map<string, FoundAge
         timeoutMs: (config.buildTimeoutMinutes ?? 90) * 60_000,
       });
       if (pending.length) await report("progress", { lines: pending.splice(0, 20) }).catch(() => {});
-      const archiveFileId = await uploadArchive(api, task, cwd);
+      // An existing repo has its own history (and maybe local secrets): nothing from it is uploaded.
+      const linked = Boolean(task.projectPath) && path.resolve(task.projectPath!) === cwd;
+      const archiveFileId = linked ? null : await uploadArchive(api, task, cwd);
       await report("result", { output, location: cwd, archiveFileId });
       log.ok(`${task.stage === "prompt" ? "Done" : "Built"}. Everything is in ${cwd}`);
     }

@@ -12,7 +12,7 @@ const RECENT = 8;
 
 export async function listProjects(userId: string): Promise<ProjectsResponse> {
   const favorites = await db
-    .select({ id: ideas.id, title: ideas.title, nextStep: ideas.nextStep, folderId: ideas.folderId, favoriteAt: ideas.favoriteAt, updatedAt: ideas.updatedAt })
+    .select({ id: ideas.id, title: ideas.title, nextStep: ideas.nextStep, folderId: ideas.folderId, projectPath: ideas.projectPath, favoriteAt: ideas.favoriteAt, updatedAt: ideas.updatedAt })
     .from(ideas)
     .where(and(eq(ideas.userId, userId), isNotNull(ideas.favoriteAt), isNull(ideas.archivedAt)))
     .orderBy(ideas.favoriteAt);
@@ -29,7 +29,7 @@ export async function listProjects(userId: string): Promise<ProjectsResponse> {
     .limit(RECENT);
   const recent = recentIds.length
     ? await db
-        .select({ id: ideas.id, title: ideas.title, nextStep: ideas.nextStep, folderId: ideas.folderId, favoriteAt: ideas.favoriteAt, updatedAt: ideas.updatedAt })
+        .select({ id: ideas.id, title: ideas.title, nextStep: ideas.nextStep, folderId: ideas.folderId, projectPath: ideas.projectPath, favoriteAt: ideas.favoriteAt, updatedAt: ideas.updatedAt })
         .from(ideas)
         .where(inArray(ideas.id, recentIds.map((r) => r.ideaId)))
     : [];
@@ -60,7 +60,7 @@ export async function listProjects(userId: string): Promise<ProjectsResponse> {
     const run = latest.get(idea.id) ?? null;
     const runAt = run ? new Date(run.updatedAt) : null;
     return {
-      idea: { id: idea.id, title: idea.title, nextStep: idea.nextStep, folderId: idea.folderId },
+      idea: { id: idea.id, title: idea.title, nextStep: idea.nextStep, folderId: idea.folderId, projectPath: idea.projectPath },
       favoriteAt: idea.favoriteAt?.toISOString() ?? null,
       latestRun: run,
       lastRunner: runners.get(idea.id) ?? null,

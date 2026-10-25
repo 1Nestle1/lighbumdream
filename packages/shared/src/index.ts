@@ -126,6 +126,11 @@ export interface Idea {
   hasAudio: boolean;
   /** Set when you star the idea as a favourite project. */
   favoriteAt: string | null;
+  /**
+   * An existing folder on your computer that the project lives in (a repo you already have).
+   * Agents work there instead of in ~/Lightbulb; nothing from it is uploaded.
+   */
+  projectPath: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -149,6 +154,8 @@ export const UpdateIdeaBody = z.object({
   /** Moving to null sends the idea back to the inbox. */
   folderId: z.uuid().nullable().optional(),
   archived: z.boolean().optional(),
+  /** Absolute path on your computer, or null to go back to the Lightbulb projects folder. */
+  projectPath: z.string().trim().min(2).max(400).nullable().optional(),
 });
 export type UpdateIdeaBody = z.infer<typeof UpdateIdeaBody>;
 

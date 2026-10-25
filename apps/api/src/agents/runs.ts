@@ -480,7 +480,7 @@ export async function buildTask(row: IdeaRunRow): Promise<RunnerTask> {
   const stage = stageOf(row);
   if (!stage || !row.leaseId) throw new Error(`Run ${row.id} has no claimed stage`);
   const [idea] = await db
-    .select({ id: ideas.id, title: ideas.title, body: ideas.body, locale: users.locale })
+    .select({ id: ideas.id, title: ideas.title, body: ideas.body, projectPath: ideas.projectPath, locale: users.locale })
     .from(ideas)
     .innerJoin(users, eq(users.id, ideas.userId))
     .where(eq(ideas.id, row.ideaId));
@@ -532,6 +532,7 @@ export async function buildTask(row: IdeaRunRow): Promise<RunnerTask> {
     revision: row.revision,
     projectSlug: projectSlug(idea.title, idea.id),
     prompt: row.prompt,
+    projectPath: idea.projectPath,
     archive: archive ? { id: archive.id, name: archive.name, sizeBytes: archive.sizeBytes } : null,
     history: history.reverse().map((h) => ({
       prompt: h.prompt ?? "",

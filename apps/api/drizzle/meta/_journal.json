@@ -78,6 +78,13 @@
       "when": 1792955650737,
       "tag": "0010_passwords",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792956122559,
+      "tag": "0011_project_path",
+      "breakpoints": true
     }
   ]
 }

@@ -166,7 +166,7 @@ export type SendPromptBody = z.infer<typeof SendPromptBody>;
 // them first, then the projects you touched most recently.
 
 export interface ProjectCard {
-  idea: { id: string; title: string; nextStep: string | null; folderId: string | null };
+  idea: { id: string; title: string; nextStep: string | null; folderId: string | null; projectPath: string | null };
   favoriteAt: string | null;
   /** The project's latest run, without its event history. */
   latestRun: Omit<IdeaRun, "events"> | null;
@@ -333,6 +333,8 @@ export interface RunnerTask {
   projectSlug: string;
   /** For "prompt": the user's instruction. */
   prompt: string | null;
+  /** The project's own folder on the user's computer, when it lives in an existing repo. */
+  projectPath: string | null;
   /** The latest saved project zip, so a computer without the folder can restore it first. */
   archive: { id: string; name: string; sizeBytes: number } | null;
   /** Earlier prompts on this project and what came of them, oldest first. */

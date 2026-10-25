@@ -9,6 +9,7 @@ import {
   CloudIcon,
   DesktopTowerIcon,
   FileIcon,
+  FolderOpenIcon,
   GithubLogoIcon,
   PaperPlaneRightIcon,
   PlusIcon,
@@ -22,7 +23,14 @@ import type { AgentKind, AgentOption, AgentsResponse, IdeaRun, Runner } from "@l
 import { AGENT_LABELS, AGENT_LIMITS } from "@lightbulb/shared/constants";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/format";
-import { useAgents, useIntegrations, useRunActions, useRuns, type useNotebookActions } from "../../lib/queries";
+import {
+  useAgents,
+  useIntegrations,
+  useRunActions,
+  useRuns,
+  useUpdateIdea,
+  type useNotebookActions,
+} from "../../lib/queries";
 import { ComputersDialog, CopyCommand } from "../Computers";
 import { PromptComposer } from "../PromptComposer";
 import { useToast } from "../Toaster";
@@ -72,7 +80,15 @@ function defaultTarget(data: AgentsResponse | undefined): Target | null {
  * Hands the idea to an agent: options, pick one, a plan to approve, then the build.
  * Lives on the idea page under the next step.
  */
-export function AgentSection({ ideaId, notebook }: { ideaId: string; notebook: NotebookActions }) {
+export function AgentSection({
+  ideaId,
+  projectPath,
+  notebook,
+}: {
+  ideaId: string;
+  projectPath: string | null;
+  notebook: NotebookActions;
+}) {
   const { m, fmt, errorText } = useI18n();
   const toast = useToast();
   const runs = useRuns(ideaId);
@@ -147,7 +163,8 @@ export function AgentSection({ ideaId, notebook }: { ideaId: string; notebook: N
 
       {/* Your own instruction, any time: it runs at once on the computer you pick. */}
       <div className="mt-6 border-t border-line pt-5">
-        <h3 className="mb-2.5 text-[13px] font-semibold text-ink">{m.prompt.title}</h3>
+        <ProjectFolderField ideaId={ideaId} projectPath={projectPath} />
+        <h3 className="mb-2.5 mt-5 text-[13px] font-semibold text-ink">{m.prompt.title}</h3>
         <PromptComposer
           ideaId={ideaId}
           busy={Boolean(active)}
@@ -967,5 +984,93 @@ function PublishRow({ run, actions }: { run: IdeaRun; actions: RunActions }) {
       <GithubLogoIcon size={17} weight="fill" aria-hidden />
       {actions.publish.isPending ? m.agent.publishing : m.agent.publish}
     </Button>
+  );
+}
+
+/** Where agents work on this project: a new folder in ~/Lightbulb, or a repo you already have. */
+function ProjectFolderField({ ideaId, projectPath }: { ideaId: string; projectPath: string | null }) {
+  const { m, errorText } = useI18n();
+  const toast = useToast();
+  const update = useUpdateIdea();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(projectPath ?? "");
+
+  const save = (path: string | null) =>
+    update.mutate(
+      { id: ideaId, body: { projectPath: path } },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          toast({ tone: "success", message: m.projectFolder.saved });
+        },
+        onError: (err) => toast({ tone: "error", message: errorText(err) }),
+      },
+    );
+
+  if (!editing) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px]">
+        <span className="font-medium text-ink-soft">{m.projectFolder.label}</span>
+        <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-ink">
+          <FolderOpenIcon size={15} className="shrink-0 text-accent-ink" aria-hidden />
+          {projectPath ? (
+            <code className="truncate font-mono text-[12.5px]" title={projectPath}>
+              {projectPath}
+            </code>
+          ) : (
+            <span className="text-ink-faint">{m.projectFolder.none}</span>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setValue(projectPath ?? "");
+            setEditing(true);
+          }}
+          className="font-medium text-accent-ink underline-offset-4 hover:underline"
+        >
+          {projectPath ? m.projectFolder.change : m.projectFolder.set}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (value.trim().length >= 2) save(value.trim());
+      }}
+    >
+      <label htmlFor={`folder-${ideaId}`} className="text-[13px] font-medium text-ink-soft">
+        {m.projectFolder.label}
+      </label>
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+        <input
+          id={`folder-${ideaId}`}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={m.projectFolder.placeholder}
+          spellCheck={false}
+          autoFocus
+          maxLength={400}
+          className="h-10 w-full min-w-0 rounded-field border border-line bg-panel px-3.5 font-mono text-[13px] text-ink outline-none transition placeholder:text-ink-faint focus:border-accent-ink focus:ring-4 focus:ring-accent/25"
+        />
+        <div className="flex gap-2">
+          <Button type="submit" variant="primary" size="sm" className="h-10" disabled={value.trim().length < 2 || update.isPending}>
+            {m.common.save}
+          </Button>
+          {projectPath && (
+            <Button size="sm" className="h-10" onClick={() => save(null)} disabled={update.isPending}>
+              {m.projectFolder.clear}
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="h-10" onClick={() => setEditing(false)}>
+            {m.common.cancel}
+          </Button>
+        </div>
+      </div>
+      <p className="mt-2 text-[13px] leading-relaxed text-ink-faint">{m.projectFolder.hint}</p>
+    </form>
   );
 }

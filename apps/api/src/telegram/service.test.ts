@@ -20,6 +20,7 @@ const idea = (suggestion: Idea["suggestion"]): Idea => ({
   nextStep: null,
   hasAudio: false,
   favoriteAt: null,
+  projectPath: null,
   archivedAt: null,
   createdAt: "",
   updatedAt: "",

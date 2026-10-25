@@ -483,6 +483,16 @@ export const ru: Messages = {
     noActivity: "Ещё ничего не запускалось.",
     lastActivity: "{ago}",
   },
+  projectFolder: {
+    label: "Папка на компьютере",
+    none: "Новая папка в ~/Lightbulb",
+    placeholder: "C:\\Users\\you\\Projects\\my-app",
+    hint: "Для проекта, который у тебя уже есть: агенты работают прямо в этой папке, и ничего из неё не загружается.",
+    change: "Изменить",
+    set: "Указать свою папку",
+    clear: "Новая папка",
+    saved: "Сохранено",
+  },
   prompt: {
     label: "Промпт для агента",
     placeholder: "Добавь напоминания, почини вход, напиши тесты...",

@@ -115,7 +115,7 @@ function IdeaWorkspace({ idea }: { idea: Idea }) {
           {data ? (
             <>
               <NextStepCard steps={data.steps} actions={actions} />
-              <AgentSection ideaId={idea.id} notebook={actions} />
+              <AgentSection ideaId={idea.id} projectPath={idea.projectPath} notebook={actions} />
               <StepsSection steps={data.steps} actions={actions} />
             </>
           ) : (

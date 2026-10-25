@@ -36,6 +36,7 @@ export const toIdea = (row: IdeaRow, snippet?: string | null): Idea => ({
   nextStep: row.nextStep,
   hasAudio: row.hasAudio,
   favoriteAt: row.favoriteAt?.toISOString() ?? null,
+  projectPath: row.projectPath,
   archivedAt: row.archivedAt?.toISOString() ?? null,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
@@ -281,6 +282,7 @@ export async function updateIdea(userId: string, ideaId: string, body: UpdateIde
   if (body.title !== undefined) patch.title = body.title;
   if (body.body !== undefined) patch.body = body.body;
   if (body.archived !== undefined) patch.archivedAt = body.archived ? new Date() : null;
+  if (body.projectPath !== undefined) patch.projectPath = body.projectPath;
   if (body.folderId !== undefined) {
     if (body.folderId === null) {
       patch.folderId = null;

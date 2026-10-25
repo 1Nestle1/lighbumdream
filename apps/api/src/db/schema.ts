@@ -123,6 +123,8 @@ export const ideas = pgTable(
     hasAudio: boolean("has_audio").notNull().default(false),
     /** Set when the user stars the idea as a favourite project; favourites lead the projects board. */
     favoriteAt: timestamp("favorite_at", { withTimezone: true }),
+    /** Existing folder on the user's computer the project lives in (agents work there, nothing is uploaded). */
+    projectPath: text("project_path"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

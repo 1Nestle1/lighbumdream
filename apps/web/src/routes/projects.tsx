@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import {
   CheckCircleIcon,
   DesktopTowerIcon,
+  FolderOpenIcon,
   HandPointingIcon,
   RocketLaunchIcon,
   StarIcon,
@@ -222,6 +223,12 @@ function ProjectCard({ project }: { project: Project }) {
               className={cn("h-1.5 w-1.5 shrink-0 rounded-full", project.lastRunner.online ? "bg-accent-ink" : "bg-line-strong")}
               aria-label={project.lastRunner.online ? m.agent.online : m.agent.offline}
             />
+          </span>
+        )}
+        {project.idea.projectPath && (
+          <span className="inline-flex min-w-0 items-center gap-1" title={project.idea.projectPath}>
+            <FolderOpenIcon size={12} aria-hidden />
+            <span className="truncate font-mono">{project.idea.projectPath.split(/[\\/]/).filter(Boolean).pop()}</span>
           </span>
         )}
         <span>{timeAgo(project.lastActivityAt)}</span>
