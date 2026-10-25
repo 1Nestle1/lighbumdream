@@ -33,6 +33,24 @@ export function TelegramConnect() {
     }
   }, [linked, pendingUrl, toast, m]);
 
+  // In development, say why there's no Connect button instead of hiding it silently.
+  // Deployed sites don't show server setup to their users.
+  if (!enabled && health.data && import.meta.env.DEV) {
+    return (
+      <div className="mt-4 rounded-field border border-dashed border-line-strong p-3.5">
+        <p className="flex items-center gap-2 text-[13px] font-medium text-ink">
+          <TelegramLogoIcon size={17} className="text-ink-faint" aria-hidden />
+          {m.telegram.notSetUp}
+        </p>
+        <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
+          {rich(m.telegram.notSetUpBody, {
+            key: <code className="rounded bg-sunken px-1 font-mono text-[12px] text-ink">TELEGRAM_BOT_TOKEN</code>,
+          })}
+        </p>
+      </div>
+    );
+  }
+
   if (!enabled || !status.data) return null;
 
   const connect = () => {

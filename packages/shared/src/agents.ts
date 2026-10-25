@@ -5,6 +5,7 @@ import {
   LIMITS,
   type AgentKind,
   type Locale,
+  type RunKind,
   type RunStage,
   type RunStatus,
 } from "./constants";
@@ -69,8 +70,10 @@ export interface AgentResult {
   followUps: string[];
   /** Where the work is on the user's computer (local runs). */
   location: string | null;
-  /** Deliverables saved to the idea's files (cloud runs). */
+  /** Deliverables saved to the idea's files: cloud outputs, and the project zip of local builds. */
   files: { id: string; name: string }[];
+  /** Set once the project has been published to GitHub. */
+  repo?: { url: string; fullName: string } | null;
 }
 
 export interface RunChoice {
@@ -97,6 +100,8 @@ export const RUN_EVENT_KINDS = [
   "failed",
   "retried",
   "cancelled",
+  "published",
+  "prompted",
 ] as const;
 export type RunEventKind = (typeof RUN_EVENT_KINDS)[number];
 
@@ -121,6 +126,9 @@ export interface IdeaRun {
   /** The computer a local run is assigned to; null for cloud runs or a removed computer. */
   runner: RunRunnerRef | null;
   agent: AgentKind | "cloud";
+  kind: RunKind;
+  /** The user's instruction, for prompt runs. */
+  prompt: string | null;
   status: RunStatus;
   options: AgentOption[] | null;
   choice: RunChoice | null;
@@ -144,6 +152,36 @@ export interface IdeaRun {
 export interface IdeaRunsResponse {
   runs: IdeaRun[];
 }
+
+/** A prompt to carry on with a project on one of your computers. Runs at once: it's your instruction. */
+export const SendPromptBody = z.object({
+  prompt: z.string().trim().min(1).max(LIMITS.promptChars),
+  runnerId: z.uuid(),
+  agent: z.enum(AGENT_KINDS),
+});
+export type SendPromptBody = z.infer<typeof SendPromptBody>;
+
+// ---------- Projects board ----------
+// An idea becomes a project once an agent has worked on it. You star favourites; the board shows
+// them first, then the projects you touched most recently.
+
+export interface ProjectCard {
+  idea: { id: string; title: string; nextStep: string | null; folderId: string | null };
+  favoriteAt: string | null;
+  /** The project's latest run, without its event history. */
+  latestRun: Omit<IdeaRun, "events"> | null;
+  /** The computer the project last ran on, the default for the next prompt. */
+  lastRunner: RunRunnerRef | null;
+  lastActivityAt: string;
+}
+
+export interface ProjectsResponse {
+  favorites: ProjectCard[];
+  /** Projects with agent work, latest first, not counting favourites. */
+  recent: ProjectCard[];
+}
+
+export const FavoriteBody = z.object({ favorite: z.boolean() });
 
 export const StartRunBody = z.discriminatedUnion("target", [
   z.object({ target: z.literal("cloud") }),
@@ -176,9 +214,46 @@ export interface Runner {
 }
 
 export interface AgentsResponse {
-  cloud: { available: boolean; budgetUsd: number; buildsPerDay: number };
+  cloud: {
+    available: boolean;
+    /** Cloud runs use the user's own Anthropic key (no daily limit from the server). */
+    ownKey: boolean;
+    budgetUsd: number;
+    buildsPerDay: number;
+  };
   runners: Runner[];
 }
+
+// ---------- Integrations (your own API keys and services) ----------
+
+export const INTEGRATION_PROVIDERS = ["anthropic", "github"] as const;
+export type IntegrationProvider = (typeof INTEGRATION_PROVIDERS)[number];
+
+export interface Integration {
+  provider: IntegrationProvider;
+  /** What identifies the connection without revealing it: "…x7Qa" or a GitHub login. */
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface IntegrationsResponse {
+  /** False when the server has no encryption key configured for stored secrets. */
+  available: boolean;
+  integrations: Integration[];
+}
+
+export const ConnectIntegrationBody = z.object({ secret: z.string().trim().min(10).max(500) });
+
+export const PublishRunBody = z.object({
+  name: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9._-]{1,100}$/, "Letters, digits, dots, dashes and underscores")
+    .optional(),
+  private: z.boolean().default(true),
+});
+export type PublishRunBody = z.input<typeof PublishRunBody>;
 
 export const RenameRunnerBody = z.object({ name: z.string().trim().min(1).max(60) });
 
@@ -256,6 +331,12 @@ export interface RunnerTask {
   revision: string | null;
   /** Folder name for the project on the runner's computer. */
   projectSlug: string;
+  /** For "prompt": the user's instruction. */
+  prompt: string | null;
+  /** The latest saved project zip, so a computer without the folder can restore it first. */
+  archive: { id: string; name: string; sizeBytes: number } | null;
+  /** Earlier prompts on this project and what came of them, oldest first. */
+  history: { prompt: string; summary: string | null; at: string }[];
 }
 
 export interface RunnerClaimResponse {
@@ -274,6 +355,8 @@ export const RunnerResultBody = z.object({
   leaseId: LeaseId,
   output: z.unknown(),
   location: z.string().max(500).nullable(),
+  /** The project zip uploaded with POST /runner/runs/:id/archive, if the runner made one. */
+  archiveFileId: z.uuid().nullable().optional(),
 });
 export const RUNNER_FAIL_CODES = ["agent_missing", "auth", "invalid_output", "timeout", "failed"] as const;
 export const RunnerFailBody = z.object({

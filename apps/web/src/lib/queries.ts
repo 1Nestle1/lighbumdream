@@ -12,7 +12,9 @@ import type {
   IdeaRun,
   IdeaRunsResponse,
   IdeaView,
+  IntegrationProvider,
   RunStatus,
+  SendPromptBody,
   StartRunBody,
   UpdateFolderBody,
   UpdateIdeaBody,
@@ -50,6 +52,8 @@ export const keys = {
   telegram: ["telegram"] as const,
   notebook: (ideaId: string) => ["notebook", ideaId] as const,
   agents: ["agents"] as const,
+  integrations: ["integrations"] as const,
+  projects: ["projects"] as const,
   runs: (ideaId: string) => ["runs", ideaId] as const,
 };
 
@@ -172,6 +176,65 @@ export function useRunActions(ideaId: string) {
     ),
     retry: useMutation(mutation((runId: string) => api.retryRun(runId))),
     cancel: useMutation(mutation((runId: string) => api.cancelRun(runId))),
+    publish: useMutation(mutation((runId: string) => api.publishRun(runId))),
+  };
+}
+
+/** The projects board. Refreshes every few seconds while any agent is working. */
+export function useProjects() {
+  return useQuery({
+    queryKey: keys.projects,
+    queryFn: api.projects,
+    refetchInterval: (query) => {
+      const cards = [...(query.state.data?.favorites ?? []), ...(query.state.data?.recent ?? [])];
+      return cards.some((c) => c.latestRun && WORKING.includes(c.latestRun.status)) ? 3_000 : 15_000;
+    },
+  });
+}
+
+/** Sends a prompt to one of your computers. The project's run list and the board refresh. */
+export function useSendPrompt(ideaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SendPromptBody) => api.sendPrompt(ideaId, body),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.runs(ideaId) }),
+        qc.invalidateQueries({ queryKey: keys.projects }),
+      ]),
+  });
+}
+
+export function useFavorite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ideaId, favorite }: { ideaId: string; favorite: boolean }) => api.setFavorite(ideaId, favorite),
+    onSuccess: (idea) => {
+      qc.setQueryData(keys.idea(idea.id), idea);
+      return qc.invalidateQueries({ queryKey: keys.projects });
+    },
+  });
+}
+
+export function useIntegrations() {
+  return useQuery({ queryKey: keys.integrations, queryFn: api.integrations });
+}
+
+/** Connecting or removing a key changes what the agent section offers (cloud on your own key). */
+export function useIntegrationActions() {
+  const qc = useQueryClient();
+  const refresh = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: keys.integrations }),
+      qc.invalidateQueries({ queryKey: keys.agents }),
+    ]);
+  return {
+    connect: useMutation({
+      mutationFn: ({ provider, secret }: { provider: IntegrationProvider; secret: string }) =>
+        api.connectIntegration(provider, secret),
+      onSuccess: refresh,
+    }),
+    disconnect: useMutation({ mutationFn: api.disconnectIntegration, onSuccess: refresh }),
   };
 }
 

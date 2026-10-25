@@ -137,6 +137,27 @@ Write a detailed step-by-step plan for building it. An agent will follow it in $
 This step is only for planning: do not build anything, create files or run commands. Write all text in ${language(task)}.`;
 }
 
+/** Carrying on with an existing project: the user's own instruction, in the project folder. */
+export function promptPrompt(task: RunnerTask, ctx: PromptContext): string {
+  const parts = [INTRO, ideaBrief(task, ctx)];
+  if (task.plan) parts.push(`The plan the project started from:\n${JSON.stringify(task.plan)}`);
+  if (task.history.length) {
+    const lines = task.history.map((h) => `- ${h.at.slice(0, 10)}: "${h.prompt}"${h.summary ? `\n  Result: ${h.summary}` : ""}`);
+    parts.push(`Earlier instructions on this project, oldest first:\n${lines.join("\n")}`);
+  }
+  parts.push(`The user's instruction now:\n<instruction>\n${task.prompt ?? ""}\n</instruction>`);
+  parts.push(`Work in the current directory; it is the project folder. Look at what is already there (README.md and the code) before changing anything, and keep what works.
+
+Rules:
+- Nobody is watching this run, so don't ask questions: make sensible choices and note them in the summary.
+- Do what the instruction asks and nothing unrelated to it.
+- Never use real payment details or personal credentials. When the project needs a secret, read it from an environment variable and document it.
+- Keep README.md up to date with how to run the project.
+
+When you are done, reply with JSON: "summary" (what you changed, how to try it, what is left) and "followUps" (up to 5 short next actions for the user). Write both in ${language(task)}.`);
+  return parts.join("\n\n");
+}
+
 /** Where cloud deliverables go; the worker collects this folder when the session ends. */
 export const CLOUD_OUTPUT_DIR = "/mnt/session/outputs";
 export const CLOUD_RESULT_FILE = "lightbulb-result.json";

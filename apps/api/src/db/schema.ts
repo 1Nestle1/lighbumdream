@@ -19,10 +19,12 @@ import type {
   AgentPlan,
   AgentResult,
   FolderIcon,
+  IntegrationProvider,
   Locale,
   RunChoice,
   RunError,
   RunEventKind,
+  RunKind,
   RunStatus,
   Suggestion,
 } from "@lightbulb/shared";
@@ -117,6 +119,8 @@ export const ideas = pgTable(
     /** Cache of the first unchecked step, kept in sync by the notebook service. */
     nextStep: text("next_step"),
     hasAudio: boolean("has_audio").notNull().default(false),
+    /** Set when the user stars the idea as a favourite project; favourites lead the projects board. */
+    favoriteAt: timestamp("favorite_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -130,6 +134,7 @@ export const ideas = pgTable(
     index("ideas_user_created_idx").on(t.userId, t.createdAt.desc()),
     index("ideas_user_folder_idx").on(t.userId, t.folderId),
     index("ideas_search_idx").using("gin", t.search),
+    index("ideas_user_favorite_idx").on(t.userId, t.favoriteAt),
   ],
 );
 
@@ -288,6 +293,9 @@ export const ideaRuns = pgTable(
     target: text("target").$type<"cloud" | "local">().notNull(),
     runnerId: uuid("runner_id").references(() => agentRunners.id, { onDelete: "set null" }),
     agent: text("agent").$type<AgentKind | "cloud">().notNull(),
+    /** "loop": options, plan, approve, build. "prompt": one instruction from the user, run at once. */
+    kind: text("kind").$type<RunKind>().notNull().default("loop"),
+    prompt: text("prompt"),
     status: text("status").$type<RunStatus>().notNull(),
     options: jsonb("options").$type<AgentOption[]>(),
     choice: jsonb("choice").$type<RunChoice>(),
@@ -334,6 +342,26 @@ export const runEvents = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("run_events_run_idx").on(t.runId, t.createdAt), index("run_events_user_idx").on(t.userId, t.kind, t.createdAt)],
+);
+
+/**
+ * A user's own API keys and service tokens (Anthropic, GitHub). The secret is encrypted with
+ * SECRETS_KEY (AES-256-GCM) and never sent back to any client; `label` is what the UI shows.
+ */
+export const userCredentials = pgTable(
+  "user_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<IntegrationProvider>().notNull(),
+    secret: text("secret").notNull(),
+    label: text("label").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("user_credentials_user_provider_uq").on(t.userId, t.provider)],
 );
 
 /** Small server-wide values, such as the ids of the provisioned cloud agent. */

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../env.js";
 
@@ -21,6 +21,8 @@ export async function putFile(key: string, data: Buffer) {
 }
 
 export const readFileStream = (key: string) => createReadStream(resolveKey(key));
+
+export const readFileBuffer = (key: string) => readFile(resolveKey(key));
 
 /** Best effort: a leftover file is harmless, a failed request because of one is not. */
 export async function removeFiles(keys: string[]) {

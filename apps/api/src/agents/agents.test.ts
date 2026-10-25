@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { AgentOptionsOutput, AgentPlanSchema, AgentResultOutput, UserCodeSchema } from "@lightbulb/shared";
 import { projectSlug } from "./slug.js";
-import { parseJsonLoose } from "@lightbulb/shared/protocol";
+import { parseJsonLoose, promptPrompt } from "@lightbulb/shared/protocol";
+import type { RunnerTask } from "@lightbulb/shared";
+
+describe("promptPrompt", () => {
+  const task = {
+    stage: "prompt",
+    locale: "ru",
+    idea: { id: "i", title: "Gym bot", body: "Track sets", steps: [], notes: [], files: [] },
+    plan: null,
+    prompt: "Add weekly reminders",
+    history: [{ prompt: "Fix parsing of 80x5", summary: "Parser handles 80x5x3 now", at: "2026-10-20T10:00:00.000Z" }],
+  } as unknown as RunnerTask;
+
+  it("carries the instruction, earlier prompts and the language", () => {
+    const text = promptPrompt(task, { place: "local" });
+    expect(text).toContain("<instruction>\nAdd weekly reminders\n</instruction>");
+    expect(text).toContain('2026-10-20: "Fix parsing of 80x5"');
+    expect(text).toContain("Result: Parser handles 80x5x3 now");
+    expect(text).toContain("Write both in Russian");
+  });
+});
 
 const ID = "3f9a1c2e-0000-4000-8000-000000000000";
 

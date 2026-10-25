@@ -1,18 +1,21 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { unzipSync } from "fflate";
 import os from "node:os";
 import path from "node:path";
 import type { RunnerAck, RunnerClaimResponse, RunnerHelloResponse, RunnerTask } from "@lightbulb/shared";
-import { AGENT_LABELS } from "@lightbulb/shared/constants";
+import { AGENT_LABELS, LIMITS } from "@lightbulb/shared/constants";
 import {
   OPTIONS_SCHEMA,
   PLAN_SCHEMA,
   RESULT_SCHEMA,
   buildPrompt,
+  promptPrompt,
   optionsPrompt,
   planPrompt,
   type PromptContext,
 } from "@lightbulb/shared/protocol";
 import { AgentError, runAgent, type FoundAgent } from "./agents.js";
+import { zipProject } from "./archive.js";
 import { ApiError, type Api } from "./api.js";
 import { VERSION, workspaceDir, type Config } from "./config.js";
 import { c, log } from "./log.js";
@@ -22,7 +25,12 @@ const REPORT_EVERY_MS = 10_000;
 const HEARTBEAT_MS = 30_000;
 const ATTACHMENTS = ".lightbulb/attachments";
 
-const STAGE_LABEL = { options: "Finding options", plan: "Writing the plan", build: "Building" } as const;
+const STAGE_LABEL = {
+  options: "Finding options",
+  plan: "Writing the plan",
+  build: "Building",
+  prompt: "Carrying on",
+} as const;
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -35,6 +43,36 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 
 export const platformName = () => `${process.platform}-${process.arch}`;
 
+/**
+ * A project that was built on another computer (or whose folder was deleted) is restored from
+ * the latest zip saved on the server, so a prompt can carry on from where it stopped.
+ */
+async function restoreFromArchive(api: Api, task: RunnerTask, dir: string) {
+  if (!task.archive) return;
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  if (entries.some((name) => name !== ".lightbulb")) return; // the project is already here
+  const zipPath = path.join(dir, ".lightbulb", "restore.zip");
+  try {
+    await api.download(`/runner/files/${task.archive.id}`, zipPath);
+    const files = unzipSync(new Uint8Array(await readFile(zipPath)));
+    let count = 0;
+    for (const [name, data] of Object.entries(files)) {
+      if (name.endsWith("/")) continue;
+      const target = path.resolve(dir, name);
+      // Never write outside the project folder, whatever the zip says.
+      if (!target.startsWith(path.resolve(dir) + path.sep)) continue;
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, data);
+      count += 1;
+    }
+    log.info(c.dim(`Restored ${count} files from ${task.archive.name}.`));
+  } catch (err) {
+    log.warn(`Couldn't restore the project from ${task.archive.name}: ${err instanceof Error ? err.message : err}`);
+  } finally {
+    await rm(zipPath, { force: true });
+  }
+}
+
 /** The idea's folder under the workspace, with its attachments downloaded next to the work. */
 async function prepareProject(api: Api, config: Config, task: RunnerTask): Promise<string> {
   const dir = path.join(workspaceDir(config), task.projectSlug);
@@ -42,6 +80,7 @@ async function prepareProject(api: Api, config: Config, task: RunnerTask): Promi
   await mkdir(meta, { recursive: true });
   // Keep Lightbulb's scratch files out of any git repository the agent creates.
   await writeFile(path.join(meta, ".gitignore"), "*\n");
+  await restoreFromArchive(api, task, dir);
 
   if (task.idea.files.length) {
     const attachments = path.join(dir, ATTACHMENTS);
@@ -70,6 +109,27 @@ async function prepareProject(api: Api, config: Config, task: RunnerTask): Promi
     await writeFile(path.join(meta, "plan.md"), lines.join("\n") + "\n");
   }
   return dir;
+}
+
+/** Zips the project and saves it to the idea. Optional: the build still counts without it. */
+async function uploadArchive(api: Api, task: RunnerTask, cwd: string): Promise<string | null> {
+  try {
+    const zip = await zipProject(cwd, LIMITS.fileBytes);
+    if (!zip) {
+      log.warn("The project is too large to upload (over 20 MB without dependencies). It stays on this computer.");
+      return null;
+    }
+    const saved = await api.upload<{ fileId: string; name: string }>(
+      `/runner/runs/${task.runId}/archive?leaseId=${task.leaseId}`,
+      zip,
+      "application/zip",
+    );
+    log.info(c.dim(`Saved ${saved.name} to the idea (${Math.round(zip.length / 1024)} KB).`));
+    return saved.fileId;
+  } catch (err) {
+    log.warn(`Couldn't save the project zip to the idea: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
 }
 
 async function handleTask(api: Api, config: Config, agents: Map<string, FoundAgent>, task: RunnerTask, stop: AbortSignal) {
@@ -151,16 +211,18 @@ async function handleTask(api: Api, config: Config, agents: Map<string, FoundAge
       else log.warn("Lightbulb didn't accept the plan; see the idea page.");
     } else {
       log.info(c.dim(`Project folder: ${cwd}`));
+      if (task.stage === "prompt") log.info(`${c.bold("Prompt:")} ${task.prompt}`);
       const output = await runAgent(found, {
         ...common,
         mode: "build",
-        prompt: buildPrompt(task, context),
+        prompt: task.stage === "prompt" ? promptPrompt(task, context) : buildPrompt(task, context),
         schema: RESULT_SCHEMA,
         timeoutMs: (config.buildTimeoutMinutes ?? 90) * 60_000,
       });
       if (pending.length) await report("progress", { lines: pending.splice(0, 20) }).catch(() => {});
-      await report("result", { output, location: cwd });
-      log.ok(`Built. Everything is in ${cwd}`);
+      const archiveFileId = await uploadArchive(api, task, cwd);
+      await report("result", { output, location: cwd, archiveFileId });
+      log.ok(`${task.stage === "prompt" ? "Done" : "Built"}. Everything is in ${cwd}`);
     }
   } catch (err) {
     if (work.signal.reason === "cancelled") return; // Lightbulb already knows

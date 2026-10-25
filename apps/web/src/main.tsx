@@ -15,6 +15,8 @@ import { ToastProvider } from "./components/Toaster";
 import { LoginPage, VerifyPage } from "./routes/auth";
 import { BankPage } from "./routes/bank";
 import { ConnectPage } from "./routes/connect";
+import { IntegrationsPage } from "./routes/integrations";
+import { ProjectsPage } from "./routes/projects";
 import { IdeaPage } from "./routes/idea";
 import { AllIdeasPage, ArchivePage, FolderPage, InboxPage } from "./routes/lists";
 
@@ -34,6 +36,8 @@ const router = createBrowserRouter([
           { path: "folders/:folderId", element: <FolderPage /> },
           { path: "ideas/:ideaId", element: <IdeaPage /> },
           { path: "connect", element: <ConnectPage /> },
+          { path: "integrations", element: <IntegrationsPage /> },
+          { path: "projects", element: <ProjectsPage /> },
         ],
       },
       { path: "*", element: <Navigate to="/" replace /> },

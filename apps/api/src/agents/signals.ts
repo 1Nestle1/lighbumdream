@@ -14,6 +14,25 @@ export const signalWork = (queue: string) => {
   emitter.emit(queue);
 };
 
+// Stage results (options, plan, done, failed) are announced here, so channels such as the
+// Telegram bot can tell the user it's their turn without the run code knowing about them.
+
+type RunListener = (runId: string) => void | Promise<void>;
+const runListeners = new Set<RunListener>();
+
+export function onRunUpdate(listener: RunListener): () => void {
+  runListeners.add(listener);
+  return () => runListeners.delete(listener);
+}
+
+export function emitRunUpdate(runId: string) {
+  for (const listener of runListeners) {
+    Promise.resolve()
+      .then(() => listener(runId))
+      .catch(() => {}); // a failed notification must never affect the run
+  }
+}
+
 /** Resolves when work is signalled on the queue, after `ms`, or when `signal` aborts. */
 export function waitForWork(queue: string, ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {

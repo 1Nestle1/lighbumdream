@@ -10,6 +10,9 @@ import { addFile, addNote } from "../notebook/service.js";
 import { createClip } from "../voice/service.js";
 import { normalizeMime } from "../voice/whisper.js";
 import { choiceToTarget, findUserByTelegramId, redeemLinkCode, suggestionChoices } from "./service.js";
+import { onRunUpdate } from "../agents/signals.js";
+import { canLinkToWeb, esc, webLink } from "./format.js";
+import { handleRevisionReply, registerRunHandlers, sendRunNotice } from "./runs.js";
 import { BOT_STRINGS, localeFromTelegram, type BotStrings } from "./strings.js";
 
 type Download = (filePath: string) => Promise<Buffer>;
@@ -29,9 +32,6 @@ interface Lightbulb {
 }
 type Ctx = Context & Lightbulb;
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-const webLink = (ideaId: string) => `${env.WEB_ORIGIN}/ideas/${ideaId}`;
 
 /**
  * The idea a message replies to. Every idea card the bot sends carries the idea id in its
@@ -42,13 +42,11 @@ function repliedIdeaId(ctx: Context): string | null {
   if (!replied || replied.from?.id !== ctx.me.id) return null;
   for (const button of replied.reply_markup?.inline_keyboard.flat() ?? []) {
     const data = "callback_data" in button ? button.callback_data : "";
-    const match = /^[a-z]+:([0-9a-f-]{36})/.exec(data ?? "");
+    const match = /^(?:f|o|of|b|u|d|dd):([0-9a-f-]{36})/.exec(data ?? "");
     if (match) return match[1]!;
   }
   return null;
 }
-// Telegram rejects URL buttons that point at localhost, so only offer them for real deployments.
-const canLinkToWeb = env.WEB_ORIGIN.startsWith("https://");
 
 function ideaCard(s: BotStrings, idea: Idea, extra?: string): string {
   const lines = [`💡 <b>${esc(idea.title)}</b>`];
@@ -199,6 +197,8 @@ export function createBot(token: string, { log, botInfo, download }: BotOptions)
     if (ctx.message.text.startsWith("/")) return;
     const account = await requireAccount(ctx);
     if (!account) return;
+    // A reply to a plan message is a change request for that plan.
+    if (await handleRevisionReply(ctx, account, ctx.message.text)) return;
     const ideaId = repliedIdeaId(ctx);
     if (ideaId) {
       const text = ctx.message.text.slice(0, LIMITS.noteChars);
@@ -341,10 +341,12 @@ export function createBot(token: string, { log, botInfo, download }: BotOptions)
     await ctx.answerCallbackQuery();
   });
 
+  registerRunHandlers(bot, requireAccount);
+
   return bot;
 }
 
-let running: { bot: Bot<Ctx>; username: string } | null = null;
+let running: { bot: Bot<Ctx>; username: string; unsubscribe: () => void } | null = null;
 
 export const telegramInfo = () => ({ enabled: running !== null, botUsername: running?.username ?? null });
 export const runningBot = () => running?.bot ?? null;
@@ -373,7 +375,9 @@ export async function startTelegram(log: FastifyBaseLogger) {
       await bot.api.deleteWebhook();
       void bot.start({ drop_pending_updates: false });
     }
-    running = { bot, username: bot.botInfo.username };
+    // Tell users when an agent needs them: options or a plan to pick, a finished or failed build.
+    const unsubscribe = onRunUpdate((runId) => sendRunNotice(bot, runId, log));
+    running = { bot, username: bot.botInfo.username, unsubscribe };
     log.info({ bot: bot.botInfo.username, mode: usesWebhook() ? "webhook" : "polling" }, "Telegram bot started");
   } catch (err) {
     log.error({ err }, "Telegram bot failed to start; continuing without it");
@@ -381,6 +385,7 @@ export async function startTelegram(log: FastifyBaseLogger) {
 }
 
 export async function stopTelegram() {
+  running?.unsubscribe();
   if (running && !usesWebhook()) await running.bot.stop();
   running = null;
 }

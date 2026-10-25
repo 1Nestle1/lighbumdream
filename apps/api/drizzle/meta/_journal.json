@@ -57,6 +57,20 @@
       "when": 1790567303240,
       "tag": "0007_agents",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791677635065,
+      "tag": "0008_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792954029416,
+      "tag": "0009_projects",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,10 @@
 import type {
   AgentsResponse,
+  IntegrationProvider,
+  IntegrationsResponse,
+  PublishRunBody,
+  ProjectsResponse,
+  SendPromptBody,
   IdeaRun,
   IdeaRunsResponse,
   PairingInfo,
@@ -150,6 +155,19 @@ export const api = {
     request<IdeaRun>(`/runs/${runId}/approve`, { method: "POST", body: { planVersion } }),
   retryRun: (runId: string) => request<IdeaRun>(`/runs/${runId}/retry`, { method: "POST" }),
   cancelRun: (runId: string) => request<IdeaRun>(`/runs/${runId}/cancel`, { method: "POST" }),
+  projects: () => request<ProjectsResponse>("/projects"),
+  sendPrompt: (ideaId: string, body: SendPromptBody) =>
+    request<IdeaRun>(`/ideas/${ideaId}/prompts`, { method: "POST", body }),
+  setFavorite: (ideaId: string, favorite: boolean) =>
+    request<Idea>(`/ideas/${ideaId}/favorite`, { method: "POST", body: { favorite } }),
+  publishRun: (runId: string, body: PublishRunBody = {}) =>
+    request<IdeaRun>(`/runs/${runId}/publish`, { method: "POST", body }),
+
+  integrations: () => request<IntegrationsResponse>("/integrations"),
+  connectIntegration: (provider: IntegrationProvider, secret: string) =>
+    request<IntegrationsResponse>(`/integrations/${provider}`, { method: "PUT", body: { secret } }),
+  disconnectIntegration: (provider: IntegrationProvider) =>
+    request<void>(`/integrations/${provider}`, { method: "DELETE" }),
 
   telegramStatus: () => request<TelegramStatus>("/telegram/status"),
   telegramLink: () => request<TelegramLinkResponse>("/telegram/link", { method: "POST" }),

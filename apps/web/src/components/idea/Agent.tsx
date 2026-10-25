@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Link } from "react-router";
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
@@ -8,6 +9,7 @@ import {
   CloudIcon,
   DesktopTowerIcon,
   FileIcon,
+  GithubLogoIcon,
   PaperPlaneRightIcon,
   PlusIcon,
   RobotIcon,
@@ -20,8 +22,9 @@ import type { AgentKind, AgentOption, AgentsResponse, IdeaRun, Runner } from "@l
 import { AGENT_LABELS, AGENT_LIMITS } from "@lightbulb/shared/constants";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/format";
-import { useAgents, useRunActions, useRuns, type useNotebookActions } from "../../lib/queries";
+import { useAgents, useIntegrations, useRunActions, useRuns, type useNotebookActions } from "../../lib/queries";
 import { ComputersDialog, CopyCommand } from "../Computers";
+import { PromptComposer } from "../PromptComposer";
 import { useToast } from "../Toaster";
 import { Button } from "../ui";
 
@@ -141,6 +144,16 @@ export function AgentSection({ ideaId, notebook }: { ideaId: string; notebook: N
           )}
         </motion.div>
       </AnimatePresence>
+
+      {/* Your own instruction, any time: it runs at once on the computer you pick. */}
+      <div className="mt-6 border-t border-line pt-5">
+        <h3 className="mb-2.5 text-[13px] font-semibold text-ink">{m.prompt.title}</h3>
+        <PromptComposer
+          ideaId={ideaId}
+          busy={Boolean(active)}
+          preferredRunnerId={runs.data?.runs.find((r) => r.runner)?.runner?.id}
+        />
+      </div>
 
       {latest && !showStart && latest.events.length > 0 && <History run={latest} />}
     </section>
@@ -272,18 +285,32 @@ function StartPanel({
               body={runner.agents.length ? runner.agents.map((a) => AGENT_LABELS[a]).join(", ") : m.agent.noAgents}
             />
           ))}
-          <TargetTile
-            selected={chosen?.kind === "cloud"}
-            disabled={!data.cloud.available}
-            onSelect={() => setTarget({ kind: "cloud" })}
-            icon={<CloudIcon size={18} weight="bold" aria-hidden />}
-            title={m.agent.cloud}
-            body={
-              data.cloud.available
-                ? fmt(m.agent.cloudHint, { budget: data.cloud.budgetUsd, builds: data.cloud.buildsPerDay })
-                : m.agent.cloudOff
-            }
-          />
+          {data.cloud.available ? (
+            <TargetTile
+              selected={chosen?.kind === "cloud"}
+              onSelect={() => setTarget({ kind: "cloud" })}
+              icon={<CloudIcon size={18} weight="bold" aria-hidden />}
+              title={m.agent.cloud}
+              body={
+                data.cloud.ownKey
+                  ? fmt(m.agent.cloudOwnKey, { budget: data.cloud.budgetUsd })
+                  : fmt(m.agent.cloudHint, { budget: data.cloud.budgetUsd, builds: data.cloud.buildsPerDay })
+              }
+            />
+          ) : (
+            <Link
+              to="/integrations"
+              className="flex items-start gap-3 rounded-field border border-dashed border-line-strong p-3.5 text-left transition hover:border-accent-ink/60 hover:bg-sunken/60 active:scale-[0.99]"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sunken text-ink-soft">
+                <CloudIcon size={18} weight="bold" aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-ink">{m.agent.cloud}</span>
+                <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-soft">{m.agent.cloudOff}</span>
+              </span>
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => setComputersOpen(true)}
@@ -393,12 +420,16 @@ function RunView({
       return <PlanView run={run} actions={actions} />;
     case "building":
       return (
-        <Working run={run} title={m.agent.building} subtitle={run.plan?.title}>
+        <Working
+          run={run}
+          title={run.kind === "prompt" ? m.prompt.working : m.agent.building}
+          subtitle={run.kind === "prompt" ? (run.prompt ?? undefined) : run.plan?.title}
+        >
           <ProgressLog lines={run.progress} />
         </Working>
       );
     case "done":
-      return <ResultView run={run} notebook={notebook} onNewRun={onNewRun} />;
+      return <ResultView run={run} actions={actions} notebook={notebook} onNewRun={onNewRun} />;
     case "failed":
       return <FailedView run={run} actions={actions} onNewRun={onNewRun} />;
     default:
@@ -737,7 +768,17 @@ function PlanView({ run, actions }: { run: IdeaRun; actions: RunActions }) {
 
 // ---------- Outcomes ----------
 
-function ResultView({ run, notebook, onNewRun }: { run: IdeaRun; notebook: NotebookActions; onNewRun: () => void }) {
+function ResultView({
+  run,
+  actions,
+  notebook,
+  onNewRun,
+}: {
+  run: IdeaRun;
+  actions: RunActions;
+  notebook: NotebookActions;
+  onNewRun: () => void;
+}) {
   const { m, errorText } = useI18n();
   const toast = useToast();
   const [added, setAdded] = useState<Set<number>>(new Set());
@@ -758,7 +799,11 @@ function ResultView({ run, notebook, onNewRun }: { run: IdeaRun; notebook: Noteb
         <SealCheckIcon size={26} weight="fill" className="text-accent-ink" aria-hidden />
         <h3 className="text-xl font-semibold tracking-tight">{m.agent.doneTitle}</h3>
       </div>
-      {run.plan && <p className="mt-1 text-sm text-ink-soft">{run.plan.title}</p>}
+      {run.kind === "prompt" && run.prompt ? (
+        <p className="mt-1 line-clamp-2 text-sm text-ink-soft">“{run.prompt}”</p>
+      ) : (
+        run.plan && <p className="mt-1 text-sm text-ink-soft">{run.plan.title}</p>
+      )}
       <p className="mt-4 max-w-[65ch] whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{result.summary}</p>
 
       {result.location && (
@@ -785,6 +830,8 @@ function ResultView({ run, notebook, onNewRun }: { run: IdeaRun; notebook: Noteb
           </ul>
         </div>
       )}
+
+      <PublishRow run={run} actions={actions} />
 
       {result.followUps.length > 0 && (
         <div className="mt-6">
@@ -868,5 +915,57 @@ function History({ run }: { run: IdeaRun }) {
         ))}
       </ol>
     </details>
+  );
+}
+
+/** Publish the build's project zip to a new GitHub repository, or open the one it went to. */
+function PublishRow({ run, actions }: { run: IdeaRun; actions: RunActions }) {
+  const { m, errorText } = useI18n();
+  const toast = useToast();
+  const integrations = useIntegrations();
+  const result = run.result!;
+  const hasZip = result.files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+  const github = integrations.data?.integrations.some((i) => i.provider === "github");
+
+  if (result.repo) {
+    return (
+      <a
+        href={result.repo.url}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-5 inline-flex h-10 items-center gap-2 rounded-full border border-line bg-panel px-4 text-sm font-medium text-ink transition hover:border-line-strong hover:bg-sunken"
+      >
+        <GithubLogoIcon size={17} weight="fill" aria-hidden />
+        {m.agent.openRepo}
+        <span className="font-mono text-[12px] text-ink-faint">{result.repo.fullName}</span>
+      </a>
+    );
+  }
+  if (!hasZip || integrations.isPending) return null;
+  if (!github) {
+    return (
+      <Link
+        to="/integrations"
+        className="mt-5 inline-flex h-10 items-center gap-2 rounded-full border border-dashed border-line-strong px-4 text-sm font-medium text-ink-soft transition hover:border-accent-ink/60 hover:text-ink"
+      >
+        <GithubLogoIcon size={17} aria-hidden />
+        {m.agent.connectGithub}
+      </Link>
+    );
+  }
+  return (
+    <Button
+      className="mt-5"
+      onClick={() =>
+        actions.publish.mutate(run.id, {
+          onSuccess: () => toast({ tone: "success", message: m.agent.published }),
+          onError: (err) => toast({ tone: "error", message: errorText(err) }),
+        })
+      }
+      disabled={actions.publish.isPending}
+    >
+      <GithubLogoIcon size={17} weight="fill" aria-hidden />
+      {actions.publish.isPending ? m.agent.publishing : m.agent.publish}
+    </Button>
   );
 }

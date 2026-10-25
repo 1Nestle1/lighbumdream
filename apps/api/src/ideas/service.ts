@@ -35,6 +35,7 @@ export const toIdea = (row: IdeaRow, snippet?: string | null): Idea => ({
   suggestion: row.suggestion,
   nextStep: row.nextStep,
   hasAudio: row.hasAudio,
+  favoriteAt: row.favoriteAt?.toISOString() ?? null,
   archivedAt: row.archivedAt?.toISOString() ?? null,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
@@ -304,4 +305,15 @@ export async function deleteIdea(userId: string, ideaId: string) {
     .returning({ id: ideas.id });
   if (!row) throw notFound("Idea");
   await removeFiles(storageKeys);
+}
+
+/** Stars or unstars an idea as a favourite project. Favourites lead the projects board. */
+export async function setFavorite(userId: string, ideaId: string, favorite: boolean): Promise<Idea> {
+  const [row] = await db
+    .update(ideas)
+    .set({ favoriteAt: favorite ? sql`coalesce(${ideas.favoriteAt}, now())` : null })
+    .where(and(eq(ideas.id, ideaId), eq(ideas.userId, userId)))
+    .returning();
+  if (!row) throw notFound("Idea");
+  return toIdea(row);
 }

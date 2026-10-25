@@ -28,6 +28,11 @@ const EnvSchema = z.object({
   /** Cloud tasks this server works on at once. */
   CLOUD_MAX_CONCURRENT: z.coerce.number().int().min(1).max(20).default(2),
   CLOUD_BUILD_TIMEOUT_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(60),
+  /**
+   * Encrypts users' own API keys and tokens at rest. Any long random string; changing it makes
+   * stored keys unreadable (users reconnect). Required in production for integrations.
+   */
+  SECRETS_KEY: z.string().min(32).optional(),
   /** The built `lightbulb` CLI, served at /api/runner/cli (relative to the API's working directory). */
   RUNNER_BUNDLE: z.string().default("../runner/dist/lightbulb.cjs"),
 });

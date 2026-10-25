@@ -64,7 +64,10 @@ in `apps/web/src/i18n/` (`ru.ts` is type-checked against `en.ts`) and `apps/api/
 
 **Telegram:** create a bot with [@BotFather](https://t.me/BotFather), put the token in
 `TELEGRAM_BOT_TOKEN`, restart the API, then press **Connect Telegram** in the sidebar. Send the
-bot text or voice notes; it replies with the suggested folders as buttons. For production set
+bot text or voice notes; it replies with the suggested folders as buttons. The bot also messages
+you when an agent needs you: options to pick (one button each), a plan to approve (or reply to it
+with what should change), a finished build (with a button to add its next steps to the checklist),
+or a failure (with Try again). In development, the sidebar says so when no token is set. For production set
 `TELEGRAM_WEBHOOK_URL` (public https URL of the API) and `TELEGRAM_WEBHOOK_SECRET`.
 
 ## How it works
@@ -96,6 +99,15 @@ bot text or voice notes; it replies with the suggested folders as buttons. For p
    server enforces that: approval names the exact plan version you read. The build streams live
    progress, and its next steps can be added to the idea's checklist with one click.
 
+7. **Projects board.** Every idea an agent has worked on is a project. **Projects** (sidebar) shows
+   your starred favourites first, then the most recent, each with its state (working with live
+   progress, your turn, done with the summary, or stopped) and a **prompt box**. Write what to do
+   next, pick any connected computer and agent, and send: it runs at once in the project's folder
+   (your prompt is the instruction, so there's no plan to approve). A computer that doesn't have
+   the folder yet restores it from the latest project zip, so projects move between computers;
+   the agent also gets your earlier prompts and their results. The same prompt box is on every
+   idea page, and the star in an idea's header adds it to favourites.
+
 ### Agents
 
 **Your computer.** The `lightbulb` CLI (`apps/runner`) runs ideas with the agent CLIs installed on
@@ -119,6 +131,23 @@ Build the CLI with `npm run build -w @lightbulb/runner` (included in `npm run bu
 hard spending cap per build (`CLOUD_BUILD_BUDGET_USD`, default 5) and a daily limit per user
 (`CLOUD_BUILDS_PER_DAY`, default 3). Deliverables (README, `project.zip`) are saved to the idea's
 files. Set `CLOUD_AGENTS=false` to offer only users' own computers.
+
+### Integrations
+
+The **Integrations** page (sidebar) connects each user's own accounts. Keys are checked with the
+service before saving, encrypted at rest (AES-256-GCM with `SECRETS_KEY`) and never sent back to
+the browser; only the last four characters or the GitHub login are shown.
+
+- **Anthropic API key:** cloud agent runs (options, plans, builds) use and bill the user's own
+  key, so the cloud works even when the server has no key, and the server's daily build limit
+  doesn't apply. Each build keeps the `CLOUD_BUILD_BUDGET_USD` cap.
+- **GitHub token** (fine-grained, "All repositories", Administration and Contents read/write):
+  finished builds get **Publish to GitHub**, which creates a private repository and pushes the
+  project through GitHub's API. Local builds upload a zip of the project for this (and so it can
+  be downloaded from the idea), leaving out `node_modules`, build output and `.env` files.
+
+In development a random `SECRETS_KEY` is created in `DATA_DIR`; in production set it yourself, or
+integrations stay off. Changing it makes stored keys unreadable, and users reconnect.
 
 Uploads are stored on disk under `DATA_DIR` (default `apps/api/data`); swap `src/storage/files.ts`
 for S3 when deploying beyond one server.

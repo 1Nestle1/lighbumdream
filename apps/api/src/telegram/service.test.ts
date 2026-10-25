@@ -19,6 +19,7 @@ const idea = (suggestion: Idea["suggestion"]): Idea => ({
   suggestion,
   nextStep: null,
   hasAudio: false,
+  favoriteAt: null,
   archivedAt: null,
   createdAt: "",
   updatedAt: "",

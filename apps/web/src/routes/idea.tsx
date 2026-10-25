@@ -9,6 +9,7 @@ import {
   FolderSimpleDashedIcon,
   MicrophoneIcon,
   RobotIcon,
+  StarIcon,
   TrashIcon,
   TrayArrowDownIcon,
 } from "@phosphor-icons/react";
@@ -19,6 +20,7 @@ import { ApiError, api } from "../lib/api";
 import { cn } from "../lib/format";
 import {
   useDeleteIdea,
+  useFavorite,
   useFolders,
   useIdea,
   useNotebook,
@@ -33,7 +35,7 @@ import { FolderGlyph } from "../components/FolderIcon";
 import { EmptyState } from "../components/IdeaGrid";
 import { SuggestionCard } from "../components/SuggestionCard";
 import { useToast } from "../components/Toaster";
-import { Button } from "../components/ui";
+import { Button, IconButton } from "../components/ui";
 
 /**
  * An idea's page. Deliberately restricted: next step, a capped checklist, a short
@@ -193,6 +195,7 @@ function IdeaHeader({ idea }: { idea: Idea }) {
           {folder ? folder.name : m.nav.inbox}
         </Link>
         <div className="flex items-center gap-2">
+          <FavoriteButton idea={idea} />
           <Button
             size="sm"
             variant="primary"
@@ -312,6 +315,31 @@ function IdeaHeader({ idea }: { idea: Idea }) {
         {idea.hasAudio && <MicrophoneIcon size={14} aria-label={m.card.voice} />}
       </div>
     </header>
+  );
+}
+
+/** Stars the idea as a favourite project, so it stays on top of the projects board. */
+function FavoriteButton({ idea }: { idea: Idea }) {
+  const { m, errorText } = useI18n();
+  const toast = useToast();
+  const favorite = useFavorite();
+  const starred = Boolean(idea.favoriteAt);
+  return (
+    <IconButton
+      size="sm"
+      variant="secondary"
+      label={starred ? m.projects.unstar : m.projects.star}
+      aria-pressed={starred}
+      onClick={() =>
+        favorite.mutate(
+          { ideaId: idea.id, favorite: !starred },
+          { onError: (err) => toast({ tone: "error", message: errorText(err) }) },
+        )
+      }
+      className={starred ? "text-accent-ink" : undefined}
+    >
+      <StarIcon size={16} weight={starred ? "fill" : "regular"} />
+    </IconButton>
   );
 }
 

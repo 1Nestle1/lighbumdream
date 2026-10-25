@@ -9,6 +9,7 @@ import { authRoutes } from "./auth/routes.js";
 import { registerSession } from "./auth/session.js";
 import { folderRoutes } from "./folders/routes.js";
 import { ideaRoutes } from "./ideas/routes.js";
+import { integrationRoutes } from "./integrations/routes.js";
 import { notebookRoutes } from "./notebook/routes.js";
 import { HttpError } from "./lib/http.js";
 import { aiSuggestionsEnabled } from "./suggest/index.js";
@@ -87,6 +88,7 @@ export async function buildApp() {
       await api.register(notebookRoutes);
       await api.register(telegramRoutes);
       await api.register(agentRoutes);
+      await api.register(integrationRoutes);
     },
     { prefix: "/api" },
   );

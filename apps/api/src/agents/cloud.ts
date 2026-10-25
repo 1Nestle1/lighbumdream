@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import Anthropic from "@anthropic-ai/sdk";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -18,10 +19,10 @@ import { appState, ideaRuns, type IdeaRunRow } from "../db/schema.js";
 import { env } from "../env.js";
 import { addFile, classifyUpload } from "../notebook/service.js";
 import { supportsModernParams } from "../suggest/claude.js";
+import { useIntegration, userBuilderKey } from "../integrations/service.js";
 import {
   buildTask,
   claimRun,
-  cloudAvailable,
   heartbeat,
   reportFailure,
   reportOptions,
@@ -35,7 +36,8 @@ import { CLOUD_QUEUE, waitForWork } from "./signals.js";
 // The cloud side of the agent loop, run inside the API process. Options and plans are single
 // structured-output calls to the Claude API. Approved builds run on Claude Managed Agents: a
 // hosted agent in its own sandbox, capped by a session budget, whose deliverables are saved to
-// the idea's files when it finishes. Needs ANTHROPIC_API_KEY.
+// the idea's files when it finishes. Uses the user's own Anthropic key when they connected one,
+// otherwise ANTHROPIC_API_KEY.
 
 const OWNER: Owner = { kind: "cloud" };
 const CONTEXT: PromptContext = { place: "cloud", attachmentsDir: null };
@@ -43,8 +45,43 @@ const THINK_TIMEOUT_MS = 6 * 60 * 1000;
 const HEARTBEAT_MS = 30_000;
 const TICK_MS = 5_000;
 
-let client: Anthropic | null = null;
-const anthropic = () => (client ??= new Anthropic({ maxRetries: 2, timeout: 10 * 60 * 1000 }));
+/**
+ * Which Anthropic account a task runs on: the user's own key when they connected one under
+ * Integrations, otherwise the server's. Set per task, so the code below just calls anthropic().
+ */
+interface TaskKey {
+  ai: Anthropic;
+  /** app_state key of the Managed Agents agent provisioned in that account. */
+  builderKey: string;
+  own: boolean;
+}
+const taskKey = new AsyncLocalStorage<TaskKey>();
+const anthropic = () => {
+  const key = taskKey.getStore();
+  if (!key) throw new Error("No Anthropic client for this task");
+  return key.ai;
+};
+
+const clientOptions = { maxRetries: 2, timeout: 10 * 60 * 1000 };
+let serverClient: Anthropic | null = null;
+const userClients = new Map<string, { secret: string; ai: Anthropic }>();
+
+async function keyFor(userId: string): Promise<TaskKey> {
+  const own = await useIntegration(userId, "anthropic");
+  if (own) {
+    let cached = userClients.get(own.id);
+    if (!cached || cached.secret !== own.secret) {
+      cached = { secret: own.secret, ai: new Anthropic({ ...clientOptions, apiKey: own.secret }) };
+      userClients.set(own.id, cached);
+    }
+    return { ai: cached.ai, builderKey: userBuilderKey(own.id), own: true };
+  }
+  if (env.ANTHROPIC_API_KEY) {
+    serverClient ??= new Anthropic(clientOptions);
+    return { ai: serverClient, builderKey: BUILDER_KEY, own: false };
+  }
+  throw new CloudError("Connect your Anthropic API key under Integrations to run agents in the cloud.", "no_key");
+}
 
 class CloudError extends Error {
   constructor(
@@ -106,12 +143,18 @@ interface BuilderState {
   revision: number;
 }
 
-let builderPromise: Promise<BuilderState> | null = null;
+const builderPromises = new Map<string, Promise<BuilderState>>();
 
-/** The Managed Agents agent and environment, created once and remembered in app_state. */
+/**
+ * The Managed Agents agent and environment, created once per Anthropic account (the server's,
+ * or a user's own) and remembered in app_state.
+ */
 function builder(): Promise<BuilderState> {
-  builderPromise ??= (async () => {
-    const [row] = await db.select().from(appState).where(eq(appState.key, BUILDER_KEY));
+  const key = taskKey.getStore()!.builderKey;
+  const existing = builderPromises.get(key);
+  if (existing) return existing;
+  const created = (async () => {
+    const [row] = await db.select().from(appState).where(eq(appState.key, key));
     const saved = row?.value as BuilderState | undefined;
     if (saved && saved.model === env.AGENT_MODEL && saved.revision === BUILDER_REVISION) return saved;
 
@@ -138,14 +181,15 @@ function builder(): Promise<BuilderState> {
     };
     await db
       .insert(appState)
-      .values({ key: BUILDER_KEY, value: state })
+      .values({ key, value: state })
       .onConflictDoUpdate({ target: appState.key, set: { value: state } });
     return state;
   })().catch((err) => {
-    builderPromise = null;
+    builderPromises.delete(key);
     throw err;
   });
-  return builderPromise;
+  builderPromises.set(key, created);
+  return created;
 }
 
 const RUBRIC = `- ${CLOUD_OUTPUT_DIR}/README.md exists and explains what was built, how to run it and what is left to do.
@@ -330,12 +374,22 @@ async function build(row: IdeaRunRow, task: RunnerTask, progress: string[], sign
 
 // ---------- Worker ----------
 
-function describeError(err: unknown, timedOut: boolean, stage: string): { message: string; code: string } {
+function describeError(
+  err: unknown,
+  timedOut: boolean,
+  stage: string,
+  ownKey: boolean,
+): { message: string; code: string } {
   if (timedOut) return { message: `The cloud agent ran out of time on the ${stage}.`, code: "timeout" };
   if (err instanceof CloudError) return { message: err.message, code: err.code };
   if (err instanceof Anthropic.APIError) {
     if (err.status === 401 || err.status === 403) {
-      return { message: "The server's Anthropic API key was rejected.", code: "auth" };
+      return ownKey
+        ? { message: "Anthropic rejected your API key. Connect it again under Integrations.", code: "no_key" }
+        : { message: "The server's Anthropic API key was rejected.", code: "auth" };
+    }
+    if (err.status === 400 && /credit|billing|balance/i.test(err.message)) {
+      return { message: "The Anthropic account has no credit left for this run.", code: "failed" };
     }
     if (err.status === 429 || err.status === 529) {
       return { message: "The cloud agent is busy right now. Try again in a few minutes.", code: "failed" };
@@ -376,7 +430,24 @@ async function work(row: IdeaRunRow, log: FastifyBaseLogger, shutdown: AbortSign
   }, TICK_MS);
 
   let timer: NodeJS.Timeout | undefined;
+  let ownKey = false;
   try {
+    const key = await keyFor(row.userId);
+    ownKey = key.own;
+    await taskKey.run(key, () => runTask());
+  } catch (err) {
+    // On shutdown the lease simply runs out and the task is picked up again after a restart.
+    if (shutdown.aborted || cancelled) return;
+    const { message, code } = describeError(err, timedOut, stage, ownKey);
+    log.warn({ err, runId: row.id }, "Cloud agent task failed");
+    await reportFailure(OWNER, row.id, leaseId, message, code).catch(() => {});
+  } finally {
+    clearInterval(tick);
+    clearTimeout(timer);
+    shutdown.removeEventListener("abort", onShutdown);
+  }
+
+  async function runTask() {
     const task = await buildTask(row);
     stage = task.stage;
     const limitMs = task.stage === "build" ? env.CLOUD_BUILD_TIMEOUT_MINUTES * 60_000 : THINK_TIMEOUT_MS;
@@ -394,22 +465,13 @@ async function work(row: IdeaRunRow, log: FastifyBaseLogger, shutdown: AbortSign
     } else {
       await build(row, task, progress, controller.signal, log);
     }
-  } catch (err) {
-    // On shutdown the lease simply runs out and the task is picked up again after a restart.
-    if (shutdown.aborted || cancelled) return;
-    const { message, code } = describeError(err, timedOut, stage);
-    log.warn({ err, runId: row.id }, "Cloud agent task failed");
-    await reportFailure(OWNER, row.id, leaseId, message, code).catch(() => {});
-  } finally {
-    clearInterval(tick);
-    clearTimeout(timer);
-    shutdown.removeEventListener("abort", onShutdown);
   }
 }
 
 /** Starts the in-process cloud worker. Returns a function that stops it. */
 export function startCloudWorker(log: FastifyBaseLogger): () => Promise<void> {
-  if (!cloudAvailable) return async () => {};
+  // Runs even without a server key: users may bring their own (see keyFor).
+  if (env.CLOUD_AGENTS !== "true") return async () => {};
   const stop = new AbortController();
   const active = new Set<Promise<void>>();
 

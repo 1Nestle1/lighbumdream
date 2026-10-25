@@ -4,6 +4,10 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   ApprovePairingBody,
+  LIMITS,
+  PublishRunBody,
+  SendPromptBody,
+  type ProjectsResponse,
   ApproveRunBody,
   ChooseOptionBody,
   RenameRunnerBody,
@@ -39,24 +43,28 @@ import {
 } from "./runners.js";
 import {
   approveRun,
+  attachArchive,
   buildTask,
   cancelRun,
   chooseOption,
   claimRun,
-  cloudAvailable,
+  cloudFor,
   heartbeat,
   listRuns,
+  publishRun,
   reportFailure,
   reportOptions,
   reportPlan,
   reportProgress,
   reportResult,
   retryRun,
+  sendPrompt,
   reviseRun,
   runnerFile,
   startRun,
   type Owner,
 } from "./runs.js";
+import { listProjects } from "./projects.js";
 import { waitForWork } from "./signals.js";
 
 const Params = z.object({ id: z.uuid() });
@@ -74,14 +82,14 @@ const byIp = (max: number) => ({
 export async function agentRoutes(app: FastifyInstance) {
   // ---------- Signed-in user ----------
 
-  app.get("/agents", async (request): Promise<AgentsResponse> => ({
-    cloud: {
-      available: cloudAvailable,
-      budgetUsd: env.CLOUD_BUILD_BUDGET_USD,
-      buildsPerDay: env.CLOUD_BUILDS_PER_DAY,
-    },
-    runners: await listRunners(requireUser(request).id),
-  }));
+  app.get("/agents", async (request): Promise<AgentsResponse> => {
+    const user = requireUser(request);
+    const cloud = await cloudFor(user.id);
+    return {
+      cloud: { ...cloud, budgetUsd: env.CLOUD_BUILD_BUDGET_USD, buildsPerDay: env.CLOUD_BUILDS_PER_DAY },
+      runners: await listRunners(user.id),
+    };
+  });
 
   app.get("/agents/pairings/:code", async (request) => {
     requireUser(request);
@@ -113,6 +121,17 @@ export async function agentRoutes(app: FastifyInstance) {
     return reply.status(201).send(run);
   });
 
+  app.get("/projects", async (request): Promise<ProjectsResponse> => listProjects(requireUser(request).id));
+
+  app.post(
+    "/ideas/:id/prompts",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute", keyGenerator: (r: FastifyRequest) => r.user?.id ?? r.ip } } },
+    async (request, reply) => {
+      const run = await sendPrompt(requireUser(request).id, id(request), SendPromptBody.parse(request.body));
+      return reply.status(201).send(run);
+    },
+  );
+
   app.post("/runs/:id/choose", async (request) =>
     chooseOption(requireUser(request).id, id(request), ChooseOptionBody.parse(request.body)),
   );
@@ -128,6 +147,12 @@ export async function agentRoutes(app: FastifyInstance) {
   app.post("/runs/:id/retry", async (request) => retryRun(requireUser(request).id, id(request)));
 
   app.post("/runs/:id/cancel", async (request) => cancelRun(requireUser(request).id, id(request)));
+
+  app.post(
+    "/runs/:id/publish",
+    { config: { rateLimit: { max: 5, timeWindow: "1 minute", keyGenerator: (r: FastifyRequest) => r.user?.id ?? r.ip } } },
+    async (request) => publishRun(requireUser(request).id, id(request), PublishRunBody.parse(request.body ?? {})),
+  );
 
   // ---------- The `lightbulb` CLI ----------
 
@@ -210,8 +235,20 @@ export async function agentRoutes(app: FastifyInstance) {
   });
 
   app.post("/runner/runs/:id/result", async (request) => {
-    const { leaseId, output, location } = RunnerResultBody.parse(request.body);
-    return reportResult(await runnerOwner(request), id(request), leaseId, output, { location });
+    const { leaseId, output, location, archiveFileId } = RunnerResultBody.parse(request.body);
+    return reportResult(await runnerOwner(request), id(request), leaseId, output, { location, archiveFileId });
+  });
+
+  // The project folder as a zip, sent by the CLI before its result. Raw body, so no multipart here.
+  app.addContentTypeParser("application/zip", { parseAs: "buffer", bodyLimit: LIMITS.fileBytes }, (_req, body, done) =>
+    done(null, body),
+  );
+  app.post("/runner/runs/:id/archive", async (request, reply) => {
+    const runner = await requireRunner(request);
+    const { leaseId } = z.object({ leaseId: z.uuid() }).parse(request.query);
+    if (!Buffer.isBuffer(request.body)) throw new HttpError(415, "unsupported_file", "Send the zip as application/zip");
+    const file = await attachArchive(runner.id, id(request), leaseId, request.body);
+    return reply.status(201).send({ fileId: file.id, name: file.name });
   });
 
   app.post("/runner/runs/:id/fail", async (request) => {

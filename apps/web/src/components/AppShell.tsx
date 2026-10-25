@@ -9,6 +9,8 @@ import {
   ListIcon,
   MagnifyingGlassIcon,
   MoonIcon,
+  PlugsConnectedIcon,
+  RocketLaunchIcon,
   PlusIcon,
   SignOutIcon,
   SquaresFourIcon,
@@ -209,6 +211,7 @@ function Sidebar({ user, onNavigate }: { user: User; onNavigate?: () => void }) 
 
       <nav className="mt-5 flex flex-col gap-0.5" aria-label={m.nav.bank}>
         <NavItem to="/" end icon={<SquaresFourIcon size={18} />} label={m.nav.bank} onNavigate={onNavigate} />
+        <NavItem to="/projects" icon={<RocketLaunchIcon size={18} />} label={m.nav.projects} onNavigate={onNavigate} />
         <NavItem
           to="/inbox"
           icon={<TrayIcon size={18} />}
@@ -251,6 +254,12 @@ function Sidebar({ user, onNavigate }: { user: User; onNavigate?: () => void }) 
       </nav>
 
       <ComputersNav />
+      <NavItem
+        to="/integrations"
+        icon={<PlugsConnectedIcon size={18} />}
+        label={m.nav.integrations}
+        onNavigate={onNavigate}
+      />
       <TelegramConnect />
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-4">

@@ -121,6 +121,8 @@ export interface Idea {
   nextStep: string | null;
   /** True when the idea was captured by voice and the recording is kept. */
   hasAudio: boolean;
+  /** Set when you star the idea as a favourite project. */
+  favoriteAt: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

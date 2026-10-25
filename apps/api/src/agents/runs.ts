@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   ACTIVE_RUN_STATUSES,
   AGENT_LABELS,
@@ -9,6 +9,8 @@ import {
   type AgentKind,
   type AgentResult,
   type ChooseOptionBody,
+  type PublishRunBody,
+  type SendPromptBody,
   type IdeaRun,
   type RunEvent,
   type RunEventKind,
@@ -32,15 +34,26 @@ import {
 } from "../db/schema.js";
 import { env } from "../env.js";
 import { HttpError, notFound } from "../lib/http.js";
+import { publishProject } from "../integrations/github.js";
+import { hasIntegration, useIntegration } from "../integrations/service.js";
+import { addFile, deleteFile, getFile } from "../notebook/service.js";
+import { readFileBuffer } from "../storage/files.js";
 import { isUniqueViolation } from "../lib/pg.js";
-import { CLOUD_QUEUE, signalWork } from "./signals.js";
+import { CLOUD_QUEUE, emitRunUpdate, signalWork } from "./signals.js";
 import { projectSlug } from "./slug.js";
 
 // The run state machine. Users move a run between stages (choose, revise, approve); agents
 // claim the *_pending stages and "building" under a lease and report back. The only way into
 // "building" is approve(), and it names the plan version the user saw.
 
+/** The server's own key can run cloud agents for everyone (within the daily limit). */
 export const cloudAvailable = Boolean(env.ANTHROPIC_API_KEY) && env.CLOUD_AGENTS === "true";
+
+/** Cloud runs work with the server's key, or with the user's own Anthropic key. */
+export async function cloudFor(userId: string): Promise<{ available: boolean; ownKey: boolean }> {
+  const ownKey = await hasIntegration(userId, "anthropic");
+  return { available: env.CLOUD_AGENTS === "true" && (cloudAvailable || ownKey), ownKey };
+}
 
 const ONLINE_MS = 60_000;
 export const isOnline = (lastSeenAt: Date | null) =>
@@ -51,7 +64,16 @@ const STAGE: Partial<Record<RunStatus, RunStage>> = {
   plan_pending: "plan",
   building: "build",
 };
-const PENDING: Record<RunStage, RunStatus> = { options: "options_pending", plan: "plan_pending", build: "building" };
+const PENDING: Record<RunStage, RunStatus> = {
+  options: "options_pending",
+  plan: "plan_pending",
+  build: "building",
+  prompt: "building",
+};
+
+/** The stage an agent works on: prompt runs are "building" too, but carry out the user's prompt. */
+const stageOf = (row: Pick<IdeaRunRow, "status" | "kind">): RunStage | undefined =>
+  row.kind === "prompt" && row.status === "building" ? "prompt" : STAGE[row.status];
 const WORK_STATUSES = ["options_pending", "plan_pending", "building"] as const satisfies RunStatus[];
 /** Claims of one stage before it fails instead of being handed out again. */
 const MAX_ATTEMPTS = 3;
@@ -85,6 +107,8 @@ function toRun(row: IdeaRunRow, runner: RunnerRef, events: RunEvent[]): IdeaRun 
     target: row.target,
     runner: runner ? { id: runner.id, name: runner.name, online: isOnline(runner.lastSeenAt) } : null,
     agent: row.agent,
+    kind: row.kind,
+    prompt: row.prompt,
     status: row.status,
     options: row.options,
     choice: row.choice,
@@ -134,6 +158,26 @@ async function selectRuns(where: SQL | undefined, limit: number): Promise<IdeaRu
   return rows.map(({ run, runner }) => toRun(run, runner, byRun.get(run.id) ?? []));
 }
 
+/** The latest run of each idea, without history: what the projects board shows. */
+export async function listRunsForIdeas(userId: string, ideaIds: string[]): Promise<Map<string, Omit<IdeaRun, "events">>> {
+  if (!ideaIds.length) return new Map();
+  const rows = await db
+    .selectDistinctOn([ideaRuns.ideaId], {
+      run: ideaRuns,
+      runner: { id: agentRunners.id, name: agentRunners.name, lastSeenAt: agentRunners.lastSeenAt },
+    })
+    .from(ideaRuns)
+    .leftJoin(agentRunners, eq(agentRunners.id, ideaRuns.runnerId))
+    .where(and(eq(ideaRuns.userId, userId), inArray(ideaRuns.ideaId, ideaIds)))
+    .orderBy(ideaRuns.ideaId, desc(ideaRuns.createdAt));
+  return new Map(
+    rows.map(({ run, runner }) => {
+      const { events: _events, ...view } = toRun(run, runner, []);
+      return [run.ideaId, view];
+    }),
+  );
+}
+
 async function getRun(userId: string, runId: string): Promise<IdeaRun> {
   const [run] = await selectRuns(and(eq(ideaRuns.id, runId), eq(ideaRuns.userId, userId)), 1);
   if (!run) throw notFound("Run");
@@ -176,7 +220,9 @@ export async function startRun(userId: string, ideaId: string, body: StartRunBod
   let agent: AgentKind | "cloud" = "cloud";
   let label = "cloud";
   if (body.target === "cloud") {
-    if (!cloudAvailable) throw new HttpError(503, "cloud_unavailable", "Cloud agents aren't set up on this server");
+    if (!(await cloudFor(userId)).available) {
+      throw new HttpError(503, "cloud_unavailable", "Connect your Anthropic API key under Integrations to use the cloud");
+    }
   } else {
     const [runner] = await db
       .select()
@@ -204,6 +250,51 @@ export async function startRun(userId: string, ideaId: string, body: StartRunBod
     return getRun(userId, row.id);
   } catch (err) {
     if (isUniqueViolation(err)) throw new HttpError(409, "run_active", "This idea is already with an agent");
+    throw err;
+  }
+}
+
+/**
+ * Sends the user's own instruction to one of their computers, to carry on with the project.
+ * It runs at once (the prompt is the user's decision; there is no plan to approve).
+ */
+export async function sendPrompt(userId: string, ideaId: string, body: SendPromptBody): Promise<IdeaRun> {
+  const [idea] = await db
+    .select({ id: ideas.id })
+    .from(ideas)
+    .where(and(eq(ideas.id, ideaId), eq(ideas.userId, userId)));
+  if (!idea) throw notFound("Idea");
+  const [runner] = await db
+    .select()
+    .from(agentRunners)
+    .where(and(eq(agentRunners.id, body.runnerId), eq(agentRunners.userId, userId)));
+  if (!runner) throw notFound("Computer");
+  if (!runner.agents.includes(body.agent)) {
+    throw new HttpError(400, "agent_unavailable", `${AGENT_LABELS[body.agent]} wasn't found on ${runner.name}`);
+  }
+  try {
+    const row = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(ideaRuns)
+        .values({
+          userId,
+          ideaId,
+          target: "local",
+          runnerId: runner.id,
+          agent: body.agent,
+          kind: "prompt",
+          prompt: body.prompt,
+          status: "building",
+          approvedAt: new Date(),
+        })
+        .returning();
+      await addEvent(tx, row!, "prompted", body.prompt.slice(0, 300));
+      return row!;
+    });
+    signalWork(queueOf(row));
+    return getRun(userId, row.id);
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new HttpError(409, "run_active", "This project is already busy with an agent");
     throw err;
   }
 }
@@ -270,8 +361,12 @@ export async function reviseRun(userId: string, runId: string, comment: string):
   );
 }
 
-/** Cloud builds cost the server's money, so each user gets a few per day (approvals and build retries). */
+/**
+ * Cloud builds on the server's key cost the server's money, so each user gets a few per day
+ * (approvals and build retries). Builds on the user's own key have no such limit.
+ */
 async function checkCloudQuota(userId: string) {
+  if (await hasIntegration(userId, "anthropic")) return;
   const [used] = await db
     .select({ n: count() })
     .from(runEvents)
@@ -339,7 +434,7 @@ export async function failRunsOfRunner(conn: Conn, runnerId: string) {
     .from(ideaRuns)
     .where(and(eq(ideaRuns.runnerId, runnerId), inArray(ideaRuns.status, [...ACTIVE_RUN_STATUSES])));
   for (const row of rows) {
-    const stage = STAGE[row.status] ?? (row.status === "options_ready" ? "options" : "plan");
+    const stage = stageOf(row) ?? (row.status === "options_ready" ? "options" : "plan");
     const message = "The computer for this run was removed.";
     await conn
       .update(ideaRuns)
@@ -382,7 +477,7 @@ export async function claimRun(owner: Owner): Promise<IdeaRunRow | null> {
 
 /** Everything an agent needs for the run's current stage. */
 export async function buildTask(row: IdeaRunRow): Promise<RunnerTask> {
-  const stage = STAGE[row.status];
+  const stage = stageOf(row);
   if (!stage || !row.leaseId) throw new Error(`Run ${row.id} has no claimed stage`);
   const [idea] = await db
     .select({ id: ideas.id, title: ideas.title, body: ideas.body, locale: users.locale })
@@ -411,6 +506,13 @@ export async function buildTask(row: IdeaRunRow): Promise<RunnerTask> {
   ]);
 
   const option = row.choice ? row.options?.[row.choice.index] : undefined;
+  const archive = [...files].reverse().find((f) => f.name.toLowerCase().endsWith(".zip")) ?? null;
+  const history = await db
+    .select({ prompt: ideaRuns.prompt, result: ideaRuns.result, error: ideaRuns.error, at: ideaRuns.createdAt })
+    .from(ideaRuns)
+    .where(and(eq(ideaRuns.ideaId, idea.id), eq(ideaRuns.kind, "prompt"), inArray(ideaRuns.status, ["done", "failed"])))
+    .orderBy(desc(ideaRuns.createdAt))
+    .limit(5);
   return {
     runId: row.id,
     leaseId: row.leaseId,
@@ -429,6 +531,13 @@ export async function buildTask(row: IdeaRunRow): Promise<RunnerTask> {
     plan: row.plan,
     revision: row.revision,
     projectSlug: projectSlug(idea.title, idea.id),
+    prompt: row.prompt,
+    archive: archive ? { id: archive.id, name: archive.name, sizeBytes: archive.sizeBytes } : null,
+    history: history.reverse().map((h) => ({
+      prompt: h.prompt ?? "",
+      summary: h.result?.summary ?? (h.error ? `Stopped: ${h.error.message}` : null),
+      at: h.at.toISOString(),
+    })),
   };
 }
 
@@ -441,12 +550,12 @@ async function heldRun(owner: Owner, runId: string, leaseId: string): Promise<Id
     .from(ideaRuns)
     .where(and(eq(ideaRuns.id, runId), ownerFilter(owner)));
   if (!row) throw notFound("Run");
-  if (row.leaseId !== leaseId || !STAGE[row.status]) return null;
+  if (row.leaseId !== leaseId || !stageOf(row)) return null;
   return row;
 }
 
 async function failRun(row: IdeaRunRow, message: string, code: string) {
-  const stage = STAGE[row.status];
+  const stage = stageOf(row);
   if (!stage) return;
   await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -455,7 +564,8 @@ async function failRun(row: IdeaRunRow, message: string, code: string) {
       .where(and(eq(ideaRuns.id, row.id), eq(ideaRuns.status, row.status)))
       .returning();
     if (updated) await addEvent(tx, updated, "failed", message);
-  });
+    return updated;
+  }).then((updated) => updated && emitRunUpdate(row.id));
 }
 
 async function completeStage(
@@ -474,7 +584,26 @@ async function completeStage(
     await addEvent(tx, updated, event.kind, event.text);
     return true;
   });
+  if (done) emitRunUpdate(row.id);
   return done ? { ok: true, cancelled: false } : STOP;
+}
+
+/** A run with what a notification needs: the idea's title and how to reach its owner. */
+export async function runForNotice(runId: string) {
+  const [row] = await db
+    .select({
+      run: ideaRuns,
+      ideaTitle: ideas.title,
+      telegramId: users.telegramId,
+      locale: users.locale,
+      runnerName: agentRunners.name,
+    })
+    .from(ideaRuns)
+    .innerJoin(ideas, eq(ideas.id, ideaRuns.ideaId))
+    .innerJoin(users, eq(users.id, ideaRuns.userId))
+    .leftJoin(agentRunners, eq(agentRunners.id, ideaRuns.runnerId))
+    .where(eq(ideaRuns.id, runId));
+  return row ?? null;
 }
 
 const wrongStage = () => new HttpError(409, "wrong_stage", "The run isn't at that stage");
@@ -513,11 +642,19 @@ export async function reportResult(
   runId: string,
   leaseId: string,
   output: unknown,
-  extra: { location: string | null; files?: AgentResult["files"] },
+  extra: { location: string | null; files?: AgentResult["files"]; archiveFileId?: string | null },
 ): Promise<RunnerAck> {
   const row = await heldRun(owner, runId, leaseId);
   if (!row) return STOP;
   if (row.status !== "building") throw wrongStage();
+  const files = [...(extra.files ?? [])];
+  if (extra.archiveFileId) {
+    const [archive] = await db
+      .select({ id: ideaFiles.id, name: ideaFiles.name })
+      .from(ideaFiles)
+      .where(and(eq(ideaFiles.id, extra.archiveFileId), eq(ideaFiles.ideaId, row.ideaId)));
+    if (archive) files.push(archive);
+  }
   const parsed = AgentResultOutput.safeParse(output);
   // A build that finished is worth keeping even when its summary isn't the JSON we asked for.
   const summary = parsed.success
@@ -529,7 +666,7 @@ export async function reportResult(
     summary,
     followUps: parsed.success ? parsed.data.followUps.slice(0, AGENT_LIMITS.followUps) : [],
     location: extra.location,
-    files: extra.files ?? [],
+    files,
   };
   return completeStage(row, leaseId, { status: "done", result, finishedAt: new Date() }, { kind: "done", text: null });
 }
@@ -597,4 +734,52 @@ export async function runnerFile(runnerId: string, fileId: string) {
     .limit(1);
   if (!row) throw notFound("File");
   return row.file;
+}
+
+// ---------- Project archives and publishing ----------
+
+/** Saves the project zip a runner uploads before reporting its build result. */
+export async function attachArchive(runnerId: string, runId: string, leaseId: string, data: Buffer) {
+  const row = await heldRun({ kind: "runner", runnerId }, runId, leaseId);
+  if (!row || row.status !== "building") throw new HttpError(409, "wrong_stage", "The run isn't building");
+  const [idea] = await db.select({ title: ideas.title }).from(ideas).where(eq(ideas.id, row.ideaId));
+  const name = `${projectSlug(idea?.title ?? "project", row.ideaId)}.zip`;
+  const saved = await addFile(row.userId, row.ideaId, { name, mime: "application/zip", data });
+  // Keep one current copy of the project: drop the zips older runs saved under the same name.
+  const older = await db
+    .select({ id: ideaFiles.id })
+    .from(ideaFiles)
+    .where(and(eq(ideaFiles.ideaId, row.ideaId), eq(ideaFiles.name, name), ne(ideaFiles.id, saved.id)));
+  for (const file of older) await deleteFile(row.userId, file.id).catch(() => {});
+  return saved;
+}
+
+/** Publishes a finished run's project zip to a new GitHub repository. */
+export async function publishRun(userId: string, runId: string, body: PublishRunBody): Promise<IdeaRun> {
+  const row = await loadRun(userId, runId);
+  if (row.status !== "done" || !row.result) throw new HttpError(409, "run_moved_on", "Only a finished build can be published");
+  if (row.result.repo) throw new HttpError(409, "already_published", "This build is already on GitHub");
+
+  const zips = row.result.files.filter((f) => f.name.toLowerCase().endsWith(".zip"));
+  const archive = zips.find((f) => f.name === "project.zip") ?? zips[0];
+  if (!archive) throw new HttpError(422, "no_project_zip", "This build has no project zip to publish");
+  const github = await useIntegration(userId, "github");
+  if (!github) throw new HttpError(400, "github_not_connected", "Connect GitHub under Integrations first");
+
+  const file = await getFile(userId, archive.id);
+  const zip = await readFileBuffer(file.storageKey);
+  const [idea] = await db.select({ title: ideas.title }).from(ideas).where(eq(ideas.id, row.ideaId));
+  const name = body.name ?? (projectSlug(idea?.title ?? "", row.ideaId).replace(/-[0-9a-f]{6}$/, "") || "lightbulb-project");
+  const description = (row.plan?.title ?? idea?.title ?? "Built with Lightbulb").slice(0, 300);
+
+  const repo = await publishProject(github.secret, { name, description, private: body.private ?? true }, zip);
+  await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(ideaRuns)
+      .set({ result: { ...row.result!, repo } })
+      .where(eq(ideaRuns.id, row.id))
+      .returning();
+    await addEvent(tx, updated!, "published", repo.fullName);
+  });
+  return getRun(userId, row.id);
 }

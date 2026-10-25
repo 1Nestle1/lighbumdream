@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ConfirmIdeaBody,
   CreateIdeaBody,
+  FavoriteBody,
   ListIdeasQuery,
   RelatedIdeasQuery,
   UpdateIdeaBody,
@@ -18,6 +19,7 @@ import {
   pickUpIdeas,
   relatedIdeas,
   resuggest,
+  setFavorite,
   updateIdea,
 } from "./service.js";
 
@@ -64,6 +66,11 @@ export async function ideaRoutes(app: FastifyInstance) {
   app.patch("/ideas/:id", async (request) => {
     const user = requireUser(request);
     return updateIdea(user.id, Params.parse(request.params).id, UpdateIdeaBody.parse(request.body));
+  });
+
+  app.post("/ideas/:id/favorite", async (request) => {
+    const user = requireUser(request);
+    return setFavorite(user.id, Params.parse(request.params).id, FavoriteBody.parse(request.body).favorite);
   });
 
   app.post("/ideas/:id/confirm", async (request) => {

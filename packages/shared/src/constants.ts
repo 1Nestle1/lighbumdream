@@ -52,6 +52,7 @@ export const LIMITS = {
   files: 50,
   fileBytes: 20 * 1024 * 1024,
   userStorageBytes: 1024 * 1024 * 1024,
+  promptChars: 4000,
 } as const;
 
 // ---------- Agents ----------
@@ -82,7 +83,11 @@ export const RUN_STATUSES = [
   "cancelled",
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
-export type RunStage = "options" | "plan" | "build";
+/** "prompt": carry out the user's own instruction in an existing project. */
+export type RunStage = "options" | "plan" | "build" | "prompt";
+
+/** "loop": options, plan, approve, build. "prompt": one instruction the user wrote, run at once. */
+export type RunKind = "loop" | "prompt";
 
 export const ACTIVE_RUN_STATUSES = [
   "options_pending",

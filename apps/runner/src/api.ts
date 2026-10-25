@@ -51,6 +51,20 @@ export function createApi(server: string, token?: string) {
     server,
     post: <T>(path: string, body: unknown = {}, options: CallOptions = {}) => call<T>("POST", path, body, options),
     get: <T>(path: string, options: CallOptions = {}) => call<T>("GET", path, undefined, options),
+    /** Sends raw bytes (the project zip). */
+    async upload<T>(path: string, data: Buffer, contentType: string, options: CallOptions = {}): Promise<T> {
+      const response = await fetch(`${server}/api${path}`, {
+        method: "POST",
+        headers: { ...headers(false), "content-type": contentType },
+        body: new Uint8Array(data),
+        signal: signalFor({ timeoutMs: 5 * 60_000, ...options }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
+        throw new ApiError(response.status, body?.error ?? "http_error", body?.message ?? `HTTP ${response.status}`);
+      }
+      return (await response.json()) as T;
+    },
     async download(path: string, destination: string, options: CallOptions = {}) {
       const response = await fetch(`${server}/api${path}`, {
         headers: headers(false),
