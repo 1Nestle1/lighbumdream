@@ -1,18 +1,16 @@
 # Lightbulb
 
-An idea bank built to beat procrastination. Say or type an idea into one bar; Lightbulb files it,
-hands you a concrete first step, and keeps resurfacing ideas so they don't go stale. Later phases
-send ideas to your agent (local or cloud), which offers options, returns a detailed plan for
-approval, and only then builds.
+Lightbulb turns typed or spoken ideas into a searchable bank. Each idea can carry a folder, a first step, and a notebook. When you send an idea to an agent, you can review the plan before approving a build.
 
-**Done:** Phase 1 (accounts, capture, folder suggestion + confirmation, browse, search) and
-Phase 2 (offline voice capture, the bar-first bank, next steps, Telegram bot).
+## File a captured idea and keep its next step
 
-## Capture your first idea
+Type or dictate an idea into the capture bar. In **Inbox**, review the suggested title, folder and first step. Choose **Other folder** to change the destination, or **File idea** to accept it. The screenshots use sample gardening ideas in the web client.
 
-After signing in, type “Build a seed calendar for the balcony” into the capture bar. Review the suggested folder, confirm it, then open the saved idea to see its first step. Search for “balcony” to find it again.
+![Inbox showing a folder suggestion and a concrete first step](docs/images/filing.png)
 
-![Lightbulb email sign-in screen](docs/images/readme-example.png)
+Open **All ideas** or the destination folder to pick it up later. Each card keeps the next action alongside the idea.
+
+![Two filed ideas in Balcony garden, each with its next action](docs/images/feature.png)
 
 ## Stack
 
