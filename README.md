@@ -8,6 +8,12 @@ approval, and only then builds.
 **Done:** Phase 1 (accounts, capture, folder suggestion + confirmation, browse, search) and
 Phase 2 (offline voice capture, the bar-first bank, next steps, Telegram bot).
 
+## Capture your first idea
+
+After signing in, type “Build a seed calendar for the balcony” into the capture bar. Review the suggested folder, confirm it, then open the saved idea to see its first step. Search for “balcony” to find it again.
+
+![Lightbulb email sign-in screen](docs/images/readme-example.png)
+
 ## Stack
 
 | Part | Tech |
